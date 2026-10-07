@@ -904,24 +904,81 @@ jobs:
           kotlin "$GITHUB_WORKSPACE/kernel_workspace/Action-Build/scripts/PatchFakePatches.kts" postfix "$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/common"
           kotlin "$GITHUB_WORKSPACE/kernel_workspace/Action-Build/scripts/PatchFakePatches.kts" revert "$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/common"
 
-      # OGKI转换GKI，无需修改 dtbo 开机
-      - name: Apply Convert HMBIRD_OGKI to HMBIRD_GKI
-        if: ${{ github.event.inputs.SCHED_HMBIRD == 'true' && (fromJSON(env.VERSIONLEVEL) > 6 || (fromJSON(env.VERSIONLEVEL) == 6 && fromJSON(env.PATCHLEVEL) >= 6)) && env.XIAOMO_HMBIRD_ACTIVE != 'true' }}
+      - name: Detect HMBIRD capability
+        if: ${{ github.event.inputs.SCHED_HMBIRD == 'true' }}
         run: |
+          set -e
+          ROOT="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform"
+          COMMON="$ROOT/common"
+
+          echo "XIAOMO_HMBIRD_ACTIVE=false" >> "$GITHUB_ENV"
+          echo "XIAOMO_HMBIRD_DETECTED=false" >> "$GITHUB_ENV"
+          echo "XIAOMO_HMBIRD_MODE=none" >> "$GITHUB_ENV"
+          echo "XIAOMO_HMBIRD_STATUS=unsupported" >> "$GITHUB_ENV"
+          echo "XIAOMO_HMBIRD_DISPLAY=未检测到支持" >> "$GITHUB_ENV"
+
+          # 设备树标记优先级最高，可直接区分一加官方 HMBIRD_GKI / HMBIRD_OGKI。
+          if grep -Rqs --include='*.dts' --include='*.dtsi' 'HMBIRD_GKI' "$ROOT" 2>/dev/null; then
+            echo "XIAOMO_HMBIRD_ACTIVE=true" >> "$GITHUB_ENV"
+            echo "XIAOMO_HMBIRD_DETECTED=true" >> "$GITHUB_ENV"
+            echo "XIAOMO_HMBIRD_MODE=gki" >> "$GITHUB_ENV"
+            echo "XIAOMO_HMBIRD_STATUS=native_gki" >> "$GITHUB_ENV"
+            echo "XIAOMO_HMBIRD_DISPLAY=原生支持（HMBIRD_GKI）" >> "$GITHUB_ENV"
+            echo "✅ 检测到官方 HMBIRD_GKI"
+            exit 0
+          fi
+
+          if grep -Rqs --include='*.dts' --include='*.dtsi' 'HMBIRD_OGKI' "$ROOT" 2>/dev/null; then
+            echo "XIAOMO_HMBIRD_DETECTED=true" >> "$GITHUB_ENV"
+            echo "XIAOMO_HMBIRD_MODE=ogki" >> "$GITHUB_ENV"
+            echo "XIAOMO_HMBIRD_STATUS=native_ogki" >> "$GITHUB_ENV"
+            echo "XIAOMO_HMBIRD_DISPLAY=原厂支持（HMBIRD_OGKI）" >> "$GITHUB_ENV"
+            echo "✅ 检测到官方 HMBIRD_OGKI"
+            exit 0
+          fi
+
+          # 兼容旧源码布局；只有明确的 HMBIRD 目录才判定为原生支持。
+          for p in "$COMMON"/kernel/sched/hmbird* "$ROOT"/vendor/oplus/kernel/cpu/sched_ext/hmbird*; do
+            [ -d "$p" ] || continue
+            echo "XIAOMO_HMBIRD_ACTIVE=true" >> "$GITHUB_ENV"
+            echo "XIAOMO_HMBIRD_DETECTED=true" >> "$GITHUB_ENV"
+            echo "XIAOMO_HMBIRD_MODE=native" >> "$GITHUB_ENV"
+            echo "XIAOMO_HMBIRD_STATUS=native" >> "$GITHUB_ENV"
+            echo "XIAOMO_HMBIRD_DISPLAY=原生支持" >> "$GITHUB_ENV"
+            echo "✅ 检测到源码原生 HMBIRD"
+            exit 0
+          done
+
+          # 仅有公共头文件/调度扩展时不直接宣称已启用，避免再次误报。
+          if [ -f "$COMMON/include/linux/sched/hmbird.h" ] || \
+             find "$ROOT" -type d -path '*/vendor/oplus/kernel/cpu/sched_ext' -print -quit 2>/dev/null | grep -q .; then
+            echo "XIAOMO_HMBIRD_DETECTED=true" >> "$GITHUB_ENV"
+            echo "XIAOMO_HMBIRD_MODE=source" >> "$GITHUB_ENV"
+            echo "XIAOMO_HMBIRD_STATUS=source_present" >> "$GITHUB_ENV"
+            echo "XIAOMO_HMBIRD_DISPLAY=源码具备 HMBIRD 支持（未确认启用）" >> "$GITHUB_ENV"
+            echo "ℹ️ 源码存在 HMBIRD 组件，但未发现设备级启用标记"
+          fi
+
+      # 仅在明确检测到官方 OGKI 标记时做 6.6+ 的 GKI 兼容转换。
+      - name: Apply Convert HMBIRD_OGKI to HMBIRD_GKI
+        if: ${{ github.event.inputs.SCHED_HMBIRD == 'true' && env.XIAOMO_HMBIRD_MODE == 'ogki' && (fromJSON(env.VERSIONLEVEL) > 6 || (fromJSON(env.VERSIONLEVEL) == 6 && fromJSON(env.PATCHLEVEL) >= 6)) }}
+        run: |
+          set -e
           PATCH_DIR="${GITHUB_WORKSPACE}/kernel_workspace/Action-Build/patches"
           cd kernel_workspace/kernel_platform/common
-          for p in ./kernel/sched/hmbird* ./vendor/oplus/kernel/cpu/sched_ext/hmbird*; do
-            [ -d "$p" ] && {
-              echo "源码中风驰代码已经存在，启用二次回退"
-              exit 0
-            }
-          done
-          sed -i '1iobj-y += hmbird_patch.o' drivers/Makefile
-          echo "正在打OGKI转换GKI补丁"
-          patch -p1 -F 3 < "${PATCH_DIR}/hmbird_patch.patch" || true
-          echo "OGKI转换GKI_patch完成"
-          source $REJ_CHECKER
+          if ! grep -q 'obj-y += hmbird_patch.o' drivers/Makefile; then
+            sed -i '1iobj-y += hmbird_patch.o' drivers/Makefile
+          fi
+          echo "正在应用 HMBIRD_OGKI → HMBIRD_GKI 兼容补丁"
+          patch -p1 --forward -F 3 < "${PATCH_DIR}/hmbird_patch.patch" || {
+            [ -f drivers/hmbird_patch.c ] || exit 1
+          }
+          source "$REJ_CHECKER"
           check_rejects .
+          echo "XIAOMO_HMBIRD_ACTIVE=true" >> "$GITHUB_ENV"
+          echo "XIAOMO_HMBIRD_STATUS=compat_gki" >> "$GITHUB_ENV"
+          echo "XIAOMO_HMBIRD_DISPLAY=兼容适配（HMBIRD_OGKI→GKI）" >> "$GITHUB_ENV"
+          echo "✅ HMBIRD OGKI→GKI 兼容处理完成"
 
       - name: Apply BBRv3
         if: ${{ github.event.inputs.CCM == 'true' && env.KMI != 'android16-6.12' }}
@@ -1063,22 +1120,28 @@ jobs:
           FILE: ${{ github.event.inputs.FILE }}
         if: ${{ github.event.inputs.SCHED_HMBIRD == 'true' }}
         run: |
+          set -e
           cd kernel_workspace/kernel_platform/common
           CLEAN_FILE="${FILE//_bak/}"
-          echo "XIAOMO_HMBIRD_ACTIVE=false" >> "$GITHUB_ENV"
-          echo "XIAOMO_HMBIRD_STATUS=unsupported" >> "$GITHUB_ENV"
 
-          for p in ./kernel/sched/hmbird* ./vendor/oplus/kernel/cpu/sched_ext/hmbird*; do
-            [ -d "$p" ] && {
-              echo "✅ 源码原生存在风驰，原样保留"
-              echo "XIAOMO_HMBIRD_ACTIVE=true" >> "$GITHUB_ENV"
-              echo "XIAOMO_HMBIRD_STATUS=native" >> "$GITHUB_ENV"
-              exit 0
-            }
-          done
+          # 已经确认原生启用或已完成 OGKI→GKI 兼容时，不重复打第三方调度补丁。
+          if [ "${XIAOMO_HMBIRD_ACTIVE:-false}" = "true" ]; then
+            echo "✅ HMBIRD 已确认：${XIAOMO_HMBIRD_DISPLAY:-已启用}"
+            exit 0
+          fi
 
+          # 低版本若检测到官方 OGKI，则原样保留，不强制转换。
+          if [ "${XIAOMO_HMBIRD_MODE:-none}" = "ogki" ]; then
+            echo "XIAOMO_HMBIRD_ACTIVE=true" >> "$GITHUB_ENV"
+            echo "XIAOMO_HMBIRD_STATUS=native_ogki" >> "$GITHUB_ENV"
+            echo "XIAOMO_HMBIRD_DISPLAY=原厂支持（HMBIRD_OGKI）" >> "$GITHUB_ENV"
+            echo "✅ 原样保留官方 HMBIRD_OGKI"
+            exit 0
+          fi
+
+          # 源码只有公共组件但没有设备级启用标记时，不冒充“原生已启用”，继续尝试机型补丁。
           if ! git clone https://github.com/Numbersf/SCHED_PATCH.git -b "$CPU"; then
-            echo "ℹ️ 没有该 CPU 的风驰补丁，安全跳过"
+            echo "ℹ️ 没有该 CPU 的风驰补丁"
             exit 0
           fi
 
@@ -1089,10 +1152,12 @@ jobs:
             source "$REJ_CHECKER"
             check_rejects .
             echo "XIAOMO_HMBIRD_ACTIVE=true" >> "$GITHUB_ENV"
+            echo "XIAOMO_HMBIRD_DETECTED=true" >> "$GITHUB_ENV"
             echo "XIAOMO_HMBIRD_STATUS=patched" >> "$GITHUB_ENV"
+            echo "XIAOMO_HMBIRD_DISPLAY=补丁适配" >> "$GITHUB_ENV"
             echo "✅ 风驰补丁已成功应用"
           else
-            echo "ℹ️ 当前机型无匹配风驰补丁，安全跳过"
+            echo "ℹ️ 当前机型无匹配风驰补丁；状态保持：${XIAOMO_HMBIRD_DISPLAY:-未检测到支持}"
           fi
 
       - name: Apply LSM_BBG
@@ -1550,7 +1615,14 @@ jobs:
             FORCED_UNAME="6.6.89-android15-4-0-ge85de9b64f78ac"
           fi
           sed -i "s|__FORCED_UNAME__|$FORCED_UNAME|g" ./AnyKernel3/anykernel.sh
-          sed -i "s|__HMBIRD__|${XIAOMO_HMBIRD_STATUS:-unsupported}|g" ./AnyKernel3/anykernel.sh
+          HMBIRD_DISPLAY="${XIAOMO_HMBIRD_DISPLAY:-未检测到支持}"
+          sed -i "s|__HMBIRD__|$HMBIRD_DISPLAY|g" ./AnyKernel3/anykernel.sh
+          {
+            echo "HMBIRD_STATUS=${XIAOMO_HMBIRD_STATUS:-unsupported}"
+            echo "HMBIRD_DISPLAY=$HMBIRD_DISPLAY"
+            echo "HMBIRD_ACTIVE=${XIAOMO_HMBIRD_ACTIVE:-false}"
+            echo "HMBIRD_DETECTED=${XIAOMO_HMBIRD_DETECTED:-false}"
+          } > ./AnyKernel3/hmbird-status.txt
           mkdir -p kernel_workspace/kernel_platform/out/Final-Image-Find/
           image_path=""
           if [ -d "./kernel_workspace/kernel_platform/common/out/" ]; then
