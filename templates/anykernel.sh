@@ -116,23 +116,15 @@ if [ -z "$KSUD_PATH" ] || [ ! -x "$KSUD_PATH" ]; then
 fi
 
 ui_print "正在刷写内核..."
-ui_print "[1/3] 读取并拆分当前 Boot..."
 split_boot
-ui_print "✅ Boot 读取完成。"
-
 if [ -f "split_img/ramdisk.cpio" ]; then
-  ui_print "[2/3] AnyKernel3 标准 Ramdisk 流程..."
   unpack_ramdisk
-  ui_print "[3/3] 重打、写入并校验 Boot..."
   write_boot
 else
-  ui_print "[2/3] 当前 Boot 无 Ramdisk，保留原结构..."
-  ui_print "[3/3] 重打、写入并校验 Boot..."
   flash_boot
 fi
-
 sync
-ui_print "✅ Boot 写入并校验完成。"
+ui_print "✅ 内核刷写完成。"
 ui_print "正在自动安装 SUSFS 模块..."
 
 if "$KSUD_PATH" module install "$MODULE_PATH"; then
