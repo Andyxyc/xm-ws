@@ -1,0 +1,97 @@
+name: 13T 118 Test
+run-name: pkx110-6.6.118-${{ github.run_id }}
+
+on:
+  push:
+    branches: [SukiSU-Ultra]
+    paths: [.github/workflows/oneplus-13t-118-test.yml]
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: pkx110-118-test
+  cancel-in-progress: true
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Validate
+        run: |
+          set -euo pipefail
+          dash -n templates/anykernel.sh
+          grep -q 'PKX110_16_0_10_500_118' ".github/workflows/Build Kernel OnePlus.yml"
+          echo "PKX110 6.6.118 profile validated."
+
+      - name: Dispatch build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: python
+        run: |
+          import json, os, time, urllib.parse, urllib.request
+          repo = os.environ["GITHUB_REPOSITORY"]
+          sha = os.environ["GITHUB_SHA"]
+          base = "https://api.github.com/repos/" + repo
+          headers = {
+              "Authorization": "Bearer " + os.environ["GH_TOKEN"],
+              "Accept": "application/vnd.github+json",
+              "X-GitHub-Api-Version": "2022-11-28",
+          }
+          def api(path, payload=None):
+              data = None if payload is None else json.dumps(payload).encode()
+              req = urllib.request.Request(base+path, data=data, headers=headers,
+                  method="GET" if payload is None else "POST")
+              with urllib.request.urlopen(req, timeout=60) as r:
+                  b=r.read(); return json.loads(b) if b else {}
+          branch="SukiSU-Ultra"
+          actual=api("/branches/"+urllib.parse.quote(branch,safe=""))["commit"]["sha"]
+          if actual != sha:
+              raise SystemExit("Branch moved")
+          wf=urllib.parse.quote("Build Kernel OnePlus.yml",safe="")
+          p="/actions/workflows/"+wf
+          inputs={
+            "FILE":"oneplus_13t_b",
+            "SUSFS_CI":"Release",
+            "KPM":"KPM",
+            "SUSFS_META":"",
+            "DYNAMIC_REPO":"Numbersf",
+            "BUILD_TIME":"-1",
+            "SOURCE_PROFILE":"PKX110_16_0_10_500_118",
+            "KSU_META":"main/builtin/xiaomo/70fa0e092a2c81060823f8ae526eac14fdda2930",
+            "LZ4_UPDATE":"false",
+            "ZRAM":"0/lz4kd/8589934592",
+            "SUFFIX":"-1",
+            "RESUBLEVEL":"",
+            "FAST_BUILD":"true",
+            "LSM_BBG":"false",
+            "NETFILTER":"true",
+            "CCM":"false",
+            "UNICODE_BYPASS":"true",
+            "SCHED_HMBIRD":"false",
+            "DROID_SPACES":"false",
+            "RE_KERNEL":"false",
+            "SUSFS_DEV":"false",
+            "SPACE_NOCLEAN":"true",
+            "BUILD_NOCACHE":"false"
+          }
+          before={x["id"] for x in api(p+"/runs?per_page=30")["workflow_runs"]}
+          api(p+"/dispatches",{"ref":branch,"inputs":inputs})
+          for _ in range(36):
+              time.sleep(5)
+              found=[x for x in api(p+"/runs?per_page=30")["workflow_runs"]
+                     if x["id"] not in before and x["head_sha"]==sha and x["event"]=="workflow_dispatch"]
+              if found:
+                  if len(found)!=1: raise SystemExit("Ambiguous dispatch")
+                  print(json.dumps({"run_id":found[0]["id"],"url":found[0]["html_url"]}))
+                  break
+          else:
+              raise SystemExit("No run receipt")
