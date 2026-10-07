@@ -55,6 +55,13 @@ jobs:
                           raise SystemExit(f"Syntax error: {path}: {step.get('name')}\n{result.stderr}")
                       checked += 1
           subprocess.run(['dash', '-n', 'templates/anykernel.sh'], check=True)
+          installer = Path('templates/anykernel.sh').read_text(encoding='utf-8')
+          raw = dict(re.findall(r'^([a-z.0-9]+)=(.*)$', installer, re.M))
+          header = installer.split('\nBLOCK=boot', 1)[0]
+          prop = subprocess.run(['dash'], input=header + '\nproperties\n', text=True, capture_output=True, check=True)
+          emitted = dict(re.findall(r'^([a-z.0-9]+)=(.*)$', prop.stdout, re.M))
+          if len(raw) != 14 or raw != emitted:
+              raise SystemExit('AnyKernel3 property-reader regression.')
           subprocess.run(['shellcheck', '-s', 'sh', '--severity=error', 'templates/anykernel.sh'], check=True)
           print(f'YAML parse and shell syntax passed: {checked} workflow blocks plus installer. No device test performed.')
           PY
