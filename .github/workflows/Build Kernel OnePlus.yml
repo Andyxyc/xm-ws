@@ -149,11 +149,6 @@ on:
         description: "Unicode invisible/zero-width bypass fix"
         required: true
         default: true
-      FUSE_BPF_REVALIDATE:
-        type: boolean
-        description: "Pad Pro FUSE-BPF lookup revalidation fix (kernel-side, no LSPosed)"
-        required: true
-        default: true
       SCHED_HMBIRD:
         type: boolean
         description: "Auto preserve/apply supported HMBIRD"
@@ -1036,7 +1031,7 @@ jobs:
           check_rejects .
 
       - name: Apply Pad Pro FUSE-BPF lookup revalidation
-        if: ${{ github.event.inputs.FUSE_BPF_REVALIDATE == 'true' && (github.event.inputs.FILE == 'oneplus_pad_pro_b' || github.event.inputs.FILE == 'oneplus_pad_pro_v') }}
+        if: ${{ github.event.inputs.UNICODE_BYPASS == 'true' && (github.event.inputs.FILE == 'oneplus_pad_pro_b' || github.event.inputs.FILE == 'oneplus_pad_pro_v') }}
         run: |
           set -euo pipefail
           PATCH_DIR="${GITHUB_WORKSPACE}/kernel_workspace/Action-Build/patches"
