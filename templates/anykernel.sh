@@ -2,7 +2,7 @@
 ## OnePlus device-specific package
 ## Based on Numbersf/AnyKernel3 and osm0sis AnyKernel3
 
-properties() { '
+properties() { printf '%s\n' '
 kernel.string=xiaomo OnePlus Kernel
 do.devicecheck=0
 do.modules=0
