@@ -451,14 +451,14 @@ flash_boot() {
   if [ -f "$BIN/flash_erase" -a -f "$BIN/nandwrite" ]; then
     flash_erase $BLOCK 0 0 && nandwrite -p $BLOCK boot-new.img && xm_write_rc=0;
   else
-    dd if=boot-new.img of=$BLOCK bs=1048576 conv=fsync 2>/dev/null && xm_write_rc=0;
+    dd if=boot-new.img of=$BLOCK bs=1048576 2>/dev/null && xm_write_rc=0;
 
     if [ "$xm_write_rc" != 0 -a -x /data/adb/ksud ]; then
       ui_print " " "Direct boot write failed; retrying through KernelSU...";
       cat > $AKHOME/.xm-write-boot.sh <<EOF
 #!/system/bin/sh
 blockdev --setrw "$BLOCK" 2>/dev/null || true
-dd if="$AKHOME/boot-new.img" of="$BLOCK" bs=1048576 conv=fsync
+dd if="$AKHOME/boot-new.img" of="$BLOCK" bs=1048576
 sync
 EOF
       chmod 700 $AKHOME/.xm-write-boot.sh;
@@ -474,18 +474,19 @@ EOF
   sync;
   xm_imgsz=$(wc -c < boot-new.img);
   xm_verify=$AKHOME/.xm-boot-verify.img;
+  xm_count=$(( (xm_imgsz + 1048575) / 1048576 ));
   rm -f $xm_verify;
-  dd if=$BLOCK of=$xm_verify bs=$xm_imgsz count=1 2>/dev/null;
-  if [ $? != 0 -o ! -f "$xm_verify" ] || ! cmp -s boot-new.img $xm_verify; then
+  dd if=$BLOCK bs=1048576 count=$xm_count 2>/dev/null | head -c $xm_imgsz > $xm_verify;
+  if [ ! -f "$xm_verify" ] || ! cmp -s boot-new.img $xm_verify; then
     ui_print " " "Boot verification failed; restoring original boot...";
     xm_restore_rc=1;
-    dd if=$BOOTIMG of=$BLOCK bs=1048576 conv=fsync 2>/dev/null && xm_restore_rc=0;
+    dd if=$BOOTIMG of=$BLOCK bs=1048576 2>/dev/null && xm_restore_rc=0;
 
     if [ "$xm_restore_rc" != 0 -a -x /data/adb/ksud ]; then
       cat > $AKHOME/.xm-restore-boot.sh <<EOF
 #!/system/bin/sh
 blockdev --setrw "$BLOCK" 2>/dev/null || true
-dd if="$BOOTIMG" of="$BLOCK" bs=1048576 conv=fsync
+dd if="$BOOTIMG" of="$BLOCK" bs=1048576
 sync
 EOF
       chmod 700 $AKHOME/.xm-restore-boot.sh;
