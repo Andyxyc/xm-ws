@@ -89,8 +89,8 @@ jobs:
           doc = yaml.load(source.read_text(encoding='utf-8'), Loader=yaml.BaseLoader)
           fields = doc['on']['workflow_dispatch']['inputs']
           devices = fields['FILE']['options']
-          pilots = ['oneplus_10_pro_b', 'oneplus_11_b', 'oneplus_12_b', 'oneplus_13_b', 'oneplus_15']
-          if len(devices) != len(set(devices)) or len(devices) != 57 or not set(pilots).issubset(devices):
+          pilots = ['oneplus_10_pro_b', 'oneplus_11_b', 'oneplus_12_b', 'oneplus_13_b', 'oneplus_15', 'oneplus_pad_pro_b']
+          if len(devices) != len(set(devices)) or len(devices) != 58 or not set(pilots).issubset(devices):
               raise SystemExit('Unexpected device matrix; no dispatch performed.')
           values = {key: value.get('default', '') for key, value in fields.items()}
           values.update(SUSFS_CI='Release', KPM='KPM', SUSFS_META='', BUILD_TIME='-1',
@@ -167,7 +167,7 @@ jobs:
                           if len(valid) != 1:
                               raise RuntimeError('Pilot succeeded without one live AnyKernel3 artifact.')
                           complete += 1
-                  print(f'Pilot builds complete: {complete}/5 (compile/artifact gate only).', flush=True)
+                  print(f'Pilot builds complete: {complete}/{len(first)} (compile/artifact gate only).', flush=True)
                   if complete == len(first):
                       break
                   if time.monotonic() >= deadline:
