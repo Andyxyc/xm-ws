@@ -1,0 +1,179 @@
+name: Resume Remaining OnePlus Builds
+run-name: resume-mainline-${{ github.run_id }}
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [SukiSU-Ultra]
+    paths: [.github/workflows/batch-resume.yml]
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: xm-device-resume
+  cancel-in-progress: true
+
+jobs:
+  dispatch:
+    if: github.repository == 'Andyxyc/xm-ws'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Validate and dispatch remaining builds
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y python3-yaml
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+          import time
+          from urllib.parse import quote
+          import yaml
+
+          repo = os.environ['GITHUB_REPOSITORY']
+          ref = 'SukiSU-Ultra'
+          sha = os.environ['GITHUB_SHA']
+          workflow = 'Build Kernel OnePlus.yml'
+
+          source = Path('.github/workflows') / workflow
+          doc = yaml.load(source.read_text(encoding='utf-8'), Loader=yaml.BaseLoader)
+          fields = doc['on']['workflow_dispatch']['inputs']
+          devices = fields['FILE']['options']
+
+          # These already passed compile + artifact checks in the previous gated batch.
+          already_built = {
+              'oneplus_10_pro_b',
+              'oneplus_11_b',
+              'oneplus_12_b',
+              'oneplus_13_b',
+              'oneplus_15',
+              'oneplus_pad_pro_b',
+          }
+
+          # OnePlus 13T / PKX110 6.6.118 has now been boot-tested successfully by the owner,
+          # so do not waste another build on the same target.
+          already_boot_tested = {'oneplus_13t_b'}
+          skip = already_built | already_boot_tested
+
+          historical = json.loads(Path('reference/123pan-historical-matrix.json').read_text(encoding='utf-8'))
+          historical_configs = {row['config'] for row in historical['models']}
+          if len(devices) != 58 or len(set(devices)) != 58:
+              raise SystemExit(f'Unexpected device matrix size: {len(devices)}')
+          if len(historical['models']) != 29 or not historical_configs.issubset(set(devices)):
+              raise SystemExit('Historical 123Pan support coverage check failed.')
+          if not skip.issubset(set(devices)):
+              raise SystemExit('Resume skip list contains unknown configs.')
+
+          values = {key: value.get('default', '') for key, value in fields.items()}
+          values.update(
+              SUSFS_CI='Release',
+              KPM='KPM',
+              SUSFS_META='',
+              BUILD_TIME='-1',
+              SOURCE_PROFILE='',
+              KSU_META='main/builtin/xiaomo/70fa0e092a2c81060823f8ae526eac14fdda2930',
+              LZ4_UPDATE='false',
+              ZRAM='0/lz4kd/8589934592',
+              SUFFIX='-1',
+              FAST_BUILD='true',
+              LSM_BBG='false',
+              NETFILTER='true',
+              CCM='false',
+              UNICODE_BYPASS='true',
+              SCHED_HMBIRD='true',
+              DROID_SPACES='false',
+              RE_KERNEL='false',
+              SUSFS_DEV='false',
+              SPACE_NOCLEAN='false',
+              BUILD_NOCACHE='false',
+          )
+          if not set(values).issubset(fields) or len(values) > 25:
+              raise SystemExit('Unexpected workflow input schema.')
+
+          def api(path, payload=None):
+              args = [
+                  'gh', 'api', path,
+                  '-H', 'Accept: application/vnd.github+json',
+                  '-H', 'X-GitHub-Api-Version: 2022-11-28'
+              ]
+              data = None
+              if payload is not None:
+                  args += ['--method', 'POST', '--input', '-']
+                  data = json.dumps(payload)
+              result = subprocess.run(args, input=data, capture_output=True, text=True, timeout=90)
+              if result.returncode:
+                  raise RuntimeError(f'GitHub request failed: {result.stderr[-2000:]}')
+              return json.loads(result.stdout) if result.stdout.strip() else {}
+
+          actual = api(f'repos/{repo}/branches/{quote(ref, safe="")}')['commit']['sha']
+          if actual != sha:
+              raise SystemExit('Branch moved before dispatch; refusing stale resume batch.')
+
+          remaining = [d for d in devices if d not in skip]
+          receipts = {
+              'resume_run': os.environ['GITHUB_RUN_ID'],
+              'head_sha': sha,
+              'already_built': sorted(already_built),
+              'already_boot_tested': sorted(already_boot_tested),
+              'remaining_count': len(remaining),
+              'runs': [],
+          }
+
+          Path('batch-receipts').mkdir(exist_ok=True)
+          target = Path('batch-receipts/resume-runs.json')
+
+          def save():
+              target.write_text(json.dumps(receipts, ensure_ascii=False, indent=2), encoding='utf-8')
+
+          save()
+          print(f'Total configs: {len(devices)}; reuse: {len(skip)}; dispatch remaining: {len(remaining)}', flush=True)
+
+          for idx, device in enumerate(remaining, 1):
+              current = api(f'repos/{repo}/branches/{quote(ref, safe="")}')['commit']['sha']
+              if current != sha:
+                  raise RuntimeError('Branch changed during resume dispatch; stopping to avoid mixed-source builds.')
+
+              payload = {
+                  'ref': ref,
+                  'inputs': dict(values, FILE=device),
+                  'return_run_details': True,
+              }
+              response = api(
+                  f'repos/{repo}/actions/workflows/{quote(workflow, safe="")}/dispatches',
+                  payload
+              )
+              run_id = response.get('workflow_run_id')
+              if type(run_id) is not int or run_id <= 0:
+                  raise RuntimeError(f'Missing workflow run id for {device}')
+              receipts['runs'].append({
+                  'device': device,
+                  'run_id': run_id,
+                  'url': response.get('html_url'),
+              })
+              save()
+              print(f'[{idx}/{len(remaining)}] {device}: {run_id}', flush=True)
+              time.sleep(2)
+
+          print('All remaining OnePlus configs dispatched.', flush=True)
+          PY
+
+      - name: Keep resume receipts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: resume-receipts-${{ github.run_id }}
+          path: batch-receipts/
+          if-no-files-found: warn
+          retention-days: 7
