@@ -116,24 +116,23 @@ if [ -z "$KSUD_PATH" ] || [ ! -x "$KSUD_PATH" ]; then
 fi
 
 ui_print "正在刷写内核..."
-if ! split_boot; then
-  ui_print "❌ 拆分 Boot 失败。"
-  exit 1
-fi
+ui_print "[1/2] 正在读取当前 Boot..."
+split_boot
+ui_print "✅ Boot 读取完成。"
 
-if [ -f "split_img/ramdisk.cpio" ]; then
-  if ! unpack_ramdisk; then
-    ui_print "❌ 解包 ramdisk 失败。"
-    exit 1
-  fi
-  if ! write_boot; then
-    ui_print "❌ 写入 Boot 失败。"
-    exit 1
-  fi
+if [ "$EXPECTED_DEVICE" = "OPD2404" ]; then
+  # Pad Pro 为 builtin SukiSU 内核，只替换 kernel Image。
+  # 保留 boot 中原始 ramdisk，不做 cpio 解包/重打，减少二次刷写失败点。
+  ui_print "[2/2] Pad Pro：保留原 Ramdisk，仅替换 Image..."
+  flash_boot
 else
-  if ! flash_boot; then
-    ui_print "❌ 写入内核失败。"
-    exit 1
+  if [ -f "split_img/ramdisk.cpio" ]; then
+    ui_print "[2/2] 正在重打 Boot..."
+    unpack_ramdisk
+    write_boot
+  else
+    ui_print "[2/2] 正在替换 Image..."
+    flash_boot
   fi
 fi
 
