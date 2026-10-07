@@ -29,6 +29,19 @@ jobs:
           grep -q 'SUSFS_INSTALLED_CODE' templates/anykernel.sh
           echo "AK3 installer syntax and alternate-slot spoof logic OK"
 
+      - name: Validate zero-width runtime patch
+        run: |
+          set -euo pipefail
+          PATCH=patches/unicode_bypass_fix_6.1+.patch
+          grep -qF 'diff --git a/fs/unicode/utf8-norm.c b/fs/unicode/utf8-norm.c' "$PATCH"
+          grep -qF 'Check if the decomposition result is empty (e.g., zero-width space)' "$PATCH"
+          grep -qF "if (*LEAF_STR(leaf) == '\\0')" "$PATCH"
+          if grep -qF 'fs/unicode/utf8data.c_shipped' "$PATCH"; then
+            echo "❌ old generated-table-only unicode patch is still present"
+            exit 1
+          fi
+          echo "✅ Pad Pro will use runtime utf8 normalization zero-width fix"
+
       - name: Validate UAPI patch and existing handlers
         shell: python
         run: |
