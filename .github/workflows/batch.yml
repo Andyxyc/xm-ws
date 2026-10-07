@@ -1,0 +1,166 @@
+name: Batch
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Dispatch smoke builds
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="smoke-${GITHUB_RUN_ID}"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          smoke=(
+            "oneplus_10_pro_b"
+            "oneplus_11_b"
+            "oneplus_12_b"
+            "oneplus_13_b"
+            "oneplus_15"
+          )
+          for d in "${smoke[@]}"; do
+            gh workflow run "Build Kernel OnePlus.yml" --repo "$GITHUB_REPOSITORY" --ref SukiSU-Ultra \
+              -f FILE="$d" \
+              -f SUSFS_CI=Release \
+              -f KPM=KPM \
+              -f SUSFS_META="" \
+              -f BUILD_TIME=-1 \
+              -f KSU_META="main/builtin/xiaomo/70fa0e092a2c81060823f8ae526eac14fdda2930" \
+              -f LZ4_UPDATE=false \
+              -f ZRAM="0/lz4kd/8589934592" \
+              -f SUFFIX=-1 \
+              -f FAST_BUILD=true \
+              -f LSM_BBG=false \
+              -f NETFILTER=true \
+              -f CCM=false \
+              -f UNICODE_BYPASS=true \
+              -f SCHED_HMBIRD=true \
+              -f DROID_SPACES=false \
+              -f RE_KERNEL=false \
+              -f SUSFS_DEV=false \
+              -f SPACE_NOCLEAN=false \
+              -f BUILD_NOCACHE=false
+            sleep 3
+          done
+
+      - name: Wait for smoke builds
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          expected=5
+          deadline=$((SECONDS + 10200))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            runs="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "Build Kernel OnePlus.yml" --branch SukiSU-Ultra --limit 30 --json databaseId,status,conclusion,createdAt,url)"
+            # Select builds started after this batch run began. The five smoke builds are the newest build-workflow runs.
+            picked="$(printf '%s' "$runs" | jq 'sort_by(.createdAt) | reverse | .[0:5]')"
+            count="$(printf '%s' "$picked" | jq 'length')"
+            failed="$(printf '%s' "$picked" | jq '[.[] | select(.status=="completed" and .conclusion!="success")] | length')"
+            pending="$(printf '%s' "$picked" | jq '[.[] | select(.status!="completed")] | length')"
+            echo "smoke found=$count pending=$pending failed=$failed"
+            if [ "$failed" -gt 0 ]; then
+              printf '%s' "$picked" | jq .
+              echo "Smoke gate failed; full batch will not start."
+              exit 1
+            fi
+            if [ "$count" -eq "$expected" ] && [ "$pending" -eq 0 ]; then
+              echo "Smoke gate passed."
+              exit 0
+            fi
+            sleep 60
+          done
+          echo "Smoke gate timed out; full batch will not start."
+          exit 1
+
+      - name: Dispatch remaining builds
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          remaining=(
+            "oneplus_nord_n30_se_5g_v"
+            "oneplus_10r_v"
+            "oneplus_nord_3_b"
+            "oneplus_ace_v"
+            "oneplus_ace_race_v"
+            "oneplus_10t_v"
+            "oneplus_11r_b"
+            "oneplus_ace2_b"
+            "oneplus_pad_lite_b"
+            "oneplus_pad_mt6983_b"
+            "oneplus_ace_2v_b"
+            "oneplus_ace_pro_v"
+            "oneplus_12r_b"
+            "oneplus_ace2_pro_b"
+            "oneplus_ace3_b"
+            "oneplus_open_b"
+            "oneplus_nord_ce4_b"
+            "oneplus_n6_b"
+            "oneplus_n6x_b"
+            "oneplus_pad_go_2_b"
+            "oneplus_turbo_6x_b"
+            "oneplus_nord_ce4_lite_5g_b"
+            "oneplus_nord_ce6"
+            "oneplus_nord_ce6_lite_b"
+            "oneplus_turbo_6v"
+            "oneplus_nord_4_b"
+            "oneplus_ace_3v_b"
+            "oneplus_pad_mt6897_b"
+            "oneplus_13r_b"
+            "oneplus_ace3_pro_b"
+            "oneplus_ace5_b"
+            "oneplus_pad_pro_b"
+            "oneplus_pad2_b"
+            "oneplus_nord_ce5_b"
+            "oneplus_nord_5_b"
+            "oneplus_ace5_pro_b"
+            "oneplus_13t_b"
+            "oneplus_13s_b"
+            "oneplus_pad_2_pro_b"
+            "oneplus_pad_3_b"
+            "oneplus_ace5_race_b"
+            "oneplus_ace5_ultra_b"
+            "oneplus_pad2_mt6991_b"
+            "oneplus_ace_6"
+            "oneplus_turbo_6"
+            "oneplus_nord_6"
+            "oneplus_ace_6t"
+            "oneplus_15r"
+            "oneplus_15t"
+            "oneplus_pad_3_pro"
+            "oneplus_pad_4"
+            "oneplus_ace6_ultra"
+          )
+          for d in "${remaining[@]}"; do
+            gh workflow run "Build Kernel OnePlus.yml" --repo "$GITHUB_REPOSITORY" --ref SukiSU-Ultra \
+              -f FILE="$d" \
+              -f SUSFS_CI=Release \
+              -f KPM=KPM \
+              -f SUSFS_META="" \
+              -f BUILD_TIME=-1 \
+              -f KSU_META="main/builtin/xiaomo/70fa0e092a2c81060823f8ae526eac14fdda2930" \
+              -f LZ4_UPDATE=false \
+              -f ZRAM="0/lz4kd/8589934592" \
+              -f SUFFIX=-1 \
+              -f FAST_BUILD=true \
+              -f LSM_BBG=false \
+              -f NETFILTER=true \
+              -f CCM=false \
+              -f UNICODE_BYPASS=true \
+              -f SCHED_HMBIRD=true \
+              -f DROID_SPACES=false \
+              -f RE_KERNEL=false \
+              -f SUSFS_DEV=false \
+              -f SPACE_NOCLEAN=false \
+              -f BUILD_NOCACHE=false
+            sleep 3
+          done
+          echo "Dispatched ${#remaining[@]} remaining device builds."
