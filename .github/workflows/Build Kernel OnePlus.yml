@@ -993,14 +993,40 @@ jobs:
       - name: Apply UNICODE_BYPASS
         if: ${{ github.event.inputs.UNICODE_BYPASS == 'true' }}
         run: |
+          set -euo pipefail
           PATCH_DIR="${GITHUB_WORKSPACE}/kernel_workspace/Action-Build/patches"
           cd kernel_workspace/kernel_platform/common
-          if [ "$VERSIONLEVEL" -lt 6 ]; then
-            patch -p1 --forward < "${PATCH_DIR}/unicode_bypass_fix_6.1-.patch"
+
+          # WildKernels/kernel_patches@5757dbf56aab12356324bf1d58e8699cdfe1dcc6
+          # 6.1+ uses unicode_map/normalization tables; older kernels use legacy utf8data.
+          if [ "$VERSIONLEVEL" -gt 6 ] || { [ "$VERSIONLEVEL" -eq 6 ] && [ "$PATCHLEVEL" -ge 1 ]; }; then
+            PATCH_FILE="${PATCH_DIR}/unicode_bypass_fix_6.1+.patch"
+            UNICODE_VARIANT="6.1+"
           else
-            patch -p1 --forward < "${PATCH_DIR}/unicode_bypass_fix_6.1+.patch"
+            PATCH_FILE="${PATCH_DIR}/unicode_bypass_fix_6.1-.patch"
+            UNICODE_VARIANT="6.1-"
           fi
-          source $REJ_CHECKER
+
+          echo "Unicode zero-width fix variant: $UNICODE_VARIANT"
+          test -f fs/unicode/utf8-norm.c
+
+          # Do not accept a half-applied/generated-table-only patch. The real fix must
+          # change the runtime DECOMPOSE path so an empty decomposition becomes STOPPER.
+          patch -p1 --dry-run --forward --fuzz=0 < "$PATCH_FILE"
+          patch -p1 --forward --fuzz=0 < "$PATCH_FILE"
+
+          grep -qF 'Check if the decomposition result is empty (e.g., zero-width space)' fs/unicode/utf8-norm.c
+          grep -qF "if (*LEAF_STR(leaf) == '\\0')" fs/unicode/utf8-norm.c
+          if grep -qF 'goto ccc_mismatch;' fs/unicode/utf8-norm.c | grep -q .; then
+            :
+          fi
+
+          git diff -- fs/unicode/utf8-norm.c | grep -qF "if (*LEAF_STR(leaf) == '\\0')"
+          echo "XIAOMO_UNICODE_STATUS=runtime_utf8_norm" >> "$GITHUB_ENV"
+          echo "XIAOMO_UNICODE_SOURCE=WildKernels/kernel_patches@5757dbf56aab12356324bf1d58e8699cdfe1dcc6" >> "$GITHUB_ENV"
+          echo "✅ Unicode zero-width runtime normalization fix applied and verified"
+
+          source "$REJ_CHECKER"
           check_rejects .
 
       - name: Apply RE_KERNEL
