@@ -1,0 +1,70 @@
+name: Pad test
+on:
+  workflow_dispatch:
+  push:
+    branches: [SukiSU-Ultra]
+    paths: [.github/workflows/pad-pro-test.yml]
+permissions:
+  actions: write
+  contents: read
+concurrency:
+  group: pad-pro-test
+  cancel-in-progress: false
+jobs:
+  start:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Start focused builds
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: python
+        run: |
+          import json, os, time, urllib.request, urllib.parse
+          from pathlib import Path
+          repo = os.environ['GITHUB_REPOSITORY']
+          sha = os.environ['GITHUB_SHA']
+          base = 'https://api.github.com/repos/' + repo
+          headers = {'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28'}
+          def api(path, data=None):
+              req = urllib.request.Request(base+path, data=None if data is None else json.dumps(data).encode(), headers=headers, method='GET' if data is None else 'POST')
+              with urllib.request.urlopen(req, timeout=45) as r:
+                  body = r.read()
+                  return json.loads(body) if body else None
+          # Stop the superseded batch so it cannot release another 52 builds during this focused test.
+          old_sha = 'a39b4d950adc7cbe367e1bd2692b94e9b645569f'
+          for run in api('/actions/runs?head_sha='+old_sha+'&per_page=100')['workflow_runs']:
+              if run['path'] in ('.github/workflows/batch.yml', '.github/workflows/Build Kernel OnePlus.yml') and run['status'] in ('queued','in_progress','waiting','pending','requested'):
+                  api('/actions/runs/'+str(run['id'])+'/cancel', {})
+                  print('Stopped superseded batch run', run['id'], flush=True)
+          workflow = urllib.parse.quote('Build Kernel OnePlus.yml', safe='')
+          path = '/actions/workflows/'+workflow
+          inputs = dict(SUSFS_CI='Release', KPM='KPM', SUSFS_META='', DYNAMIC_REPO='Numbersf', BUILD_TIME='-1', KSU_META='main/builtin/xiaomo/70fa0e092a2c81060823f8ae526eac14fdda2930', LZ4_UPDATE='false', ZRAM='0/lz4kd/8589934592', SUFFIX='-1', RESUBLEVEL='', FAST_BUILD='true', LSM_BBG='false', NETFILTER='true', CCM='false', UNICODE_BYPASS='true', SCHED_HMBIRD='true', DROID_SPACES='false', RE_KERNEL='false', SUSFS_DEV='false', SPACE_NOCLEAN='false', BUILD_NOCACHE='false')
+          receipts = []
+          Path('receipts').mkdir(exist_ok=True)
+          for target in ('oneplus_pad_pro_v', 'oneplus_pad_pro_b'):
+              before = {r['id'] for r in api(path+'/runs?per_page=30')['workflow_runs']}
+              api(path+'/dispatches', {'ref':'SukiSU-Ultra','inputs':dict(inputs,FILE=target)})
+              for _ in range(36):
+                  time.sleep(5)
+                  matches = [r for r in api(path+'/runs?per_page=30')['workflow_runs'] if r['id'] not in before and r['head_sha']==sha and r['event']=='workflow_dispatch']
+                  if matches:
+                      if len(matches)!=1:
+                          raise SystemExit('Ambiguous dispatch receipt; do not submit more runs.')
+                      r=matches[0]
+                      receipt={'target':target,'run_id':r['id'],'url':r['html_url'],'head_sha':sha,'status':r['status']}
+                      receipts.append(receipt)
+                      Path('receipts/pad-pro.json').write_text(json.dumps(receipts,indent=2)+'\n')
+                      print(json.dumps(receipt),flush=True)
+                      with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as summary:
+                          summary.write('- '+target+': '+r['html_url']+'\n')
+                      break
+              else:
+                  raise SystemExit('Dispatch accepted but receipt not found; do not blindly re-dispatch.')
+      - name: Save receipts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pad-pro-receipts-${{ github.run_id }}
+          path: receipts/
+          retention-days: 7
