@@ -92,9 +92,9 @@ on:
         default: "Numbersf"
       BUILD_TIME:
         type: string
-        description: "固定保留源码原始构建时间，不允许修改//Preserve upstream build time"
+        description: "xiaomo 构建时间；F=当前 UTC//xiaomo build timestamp"
         required: false
-        default: "-1"
+        default: "F"
       KSU_META:
         type: string
         description: "管理器分支名(必填)/内置分支名(必填)/自定义版本标识(留空不修改)/回退分支提交哈希版本(留空不修改)//Manager Branch name (Required) / Builtin branch name (Required) / Custom version identifier (Leave blank to not modify) / Rollback branch commit hash version (Leave blank to not modify)"
@@ -112,11 +112,11 @@ on:
         default: "0/lz4kd/8589934592"
       SUFFIX:
         type: string
-        description: "固定保留源码原始内核版本后缀，不允许修改//Preserve upstream kernel suffix"
+        description: "兼容优先：默认不改 uname release；-1=保持源码//Compatibility-first kernel release"
         required: false
         default: "-1"
       RESUBLEVEL:
-        description: "固定保留源码原始 SUBLEVEL，不允许修改//Preserve upstream SUBLEVEL"
+        description: "兼容优先：默认不改 SUBLEVEL//Compatibility-first SUBLEVEL"
         required: false
         default: ""
       FAST_BUILD:
@@ -185,6 +185,8 @@ jobs:
       CCACHE_NOHARDLINK: "true"
       CCACHE_IS_KERNEL_COMPILING: "true"
       CCACHE_MAXSIZE: 5G
+      KBUILD_BUILD_USER: xiaomo
+      KBUILD_BUILD_HOST: xm-build
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -1174,7 +1176,7 @@ jobs:
 
       # Custom kernel build time, without adding #1 SMP PREEMPT 自定义内核构建时间，不要加入#1 SMP PREEMPT
       - name: Custom BUILD_TIME
-        if: ${{ false }}
+        if: ${{ github.event.inputs.BUILD_TIME != '-1' }}
         shell: bash
         run: |
           INPUT_TIME="${{ github.event.inputs.BUILD_TIME }}"
@@ -1425,6 +1427,7 @@ jobs:
           git clone https://github.com/Numbersf/AnyKernel3 --depth=1
           rm -rf ./AnyKernel3/.git
           cp "$GITHUB_WORKSPACE/templates/anykernel.sh" ./AnyKernel3/anykernel.sh
+          cp "$GITHUB_WORKSPACE/templates/ak3-core.sh" ./AnyKernel3/tools/ak3-core.sh
           KERNEL_MM=$(echo "$CKERNEL_VERSION" | awk -F. '{print $1"."$2}')
           DEVICE_ID=""
           case "${{ github.event.inputs.FILE }}" in
