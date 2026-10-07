@@ -1,0 +1,133 @@
+name: 13T PKX110
+run-name: pkx110-16.0.10.500-${{ github.run_id }}
+
+on:
+  push:
+    branches: [SukiSU-Ultra]
+    paths: [.github/workflows/oneplus-13t-pkx110.yml]
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: pkx110-16-0-10-500
+  cancel-in-progress: true
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Validate pinned inputs
+        run: |
+          set -euo pipefail
+          dash -n templates/anykernel.sh
+          grep -q 'SOURCE_PROFILE:' ".github/workflows/Build Kernel OnePlus.yml"
+          grep -q 'PKX110_16_0_10_500' ".github/workflows/Build Kernel OnePlus.yml"
+          grep -q '6.6.89-android15-4-0-ge85de9b64f78ac' ".github/workflows/Build Kernel OnePlus.yml"
+          grep -q '__FORCED_UNAME__' templates/anykernel.sh
+          echo "PKX110 pinned source and Uname override validated."
+
+      - name: Dispatch OnePlus 13T build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: python
+        run: |
+          import json, os, time, urllib.parse, urllib.request
+          from pathlib import Path
+
+          repo = os.environ["GITHUB_REPOSITORY"]
+          sha = os.environ["GITHUB_SHA"]
+          base = "https://api.github.com/repos/" + repo
+          headers = {
+              "Authorization": "Bearer " + os.environ["GH_TOKEN"],
+              "Accept": "application/vnd.github+json",
+              "X-GitHub-Api-Version": "2022-11-28",
+          }
+
+          def api(path, payload=None):
+              data = None if payload is None else json.dumps(payload).encode()
+              req = urllib.request.Request(
+                  base + path, data=data, headers=headers,
+                  method="GET" if payload is None else "POST"
+              )
+              with urllib.request.urlopen(req, timeout=60) as response:
+                  body = response.read()
+                  return json.loads(body) if body else {}
+
+          branch = "SukiSU-Ultra"
+          actual = api("/branches/" + urllib.parse.quote(branch, safe=""))["commit"]["sha"]
+          if actual != sha:
+              raise SystemExit(f"Branch moved: {actual} != {sha}")
+
+          workflow = urllib.parse.quote("Build Kernel OnePlus.yml", safe="")
+          path = "/actions/workflows/" + workflow
+          inputs = {
+              "FILE": "oneplus_13t_b",
+              "SUSFS_CI": "Release",
+              "KPM": "KPM",
+              "SUSFS_META": "",
+              "DYNAMIC_REPO": "Numbersf",
+              "BUILD_TIME": "-1",
+              "SOURCE_PROFILE": "PKX110_16_0_10_500",
+              "KSU_META": "main/builtin/xiaomo/70fa0e092a2c81060823f8ae526eac14fdda2930",
+              "LZ4_UPDATE": "false",
+              "ZRAM": "0/lz4kd/8589934592",
+              "SUFFIX": "-1",
+              "RESUBLEVEL": "",
+              "FAST_BUILD": "true",
+              "LSM_BBG": "false",
+              "NETFILTER": "true",
+              "CCM": "false",
+              "UNICODE_BYPASS": "true",
+              "SCHED_HMBIRD": "true",
+              "DROID_SPACES": "false",
+              "RE_KERNEL": "false",
+              "SUSFS_DEV": "false",
+              "SPACE_NOCLEAN": "true",
+              "BUILD_NOCACHE": "false",
+          }
+
+          before = {r["id"] for r in api(path + "/runs?per_page=30")["workflow_runs"]}
+          api(path + "/dispatches", {"ref": branch, "inputs": inputs})
+          Path("receipt").mkdir(exist_ok=True)
+          for _ in range(36):
+              time.sleep(5)
+              runs = api(path + "/runs?per_page=30")["workflow_runs"]
+              found = [
+                  r for r in runs
+                  if r["id"] not in before and r["head_sha"] == sha
+                  and r["event"] == "workflow_dispatch"
+              ]
+              if found:
+                  if len(found) != 1:
+                      raise SystemExit("Ambiguous dispatch result")
+                  r = found[0]
+                  receipt = {
+                      "run_id": r["id"],
+                      "url": r["html_url"],
+                      "head_sha": sha,
+                      "target": "PKX110_16.0.10.500(CN01)",
+                      "kernel": "6.6.89",
+                      "uname": "6.6.89-android15-4-0-ge85de9b64f78ac",
+                  }
+                  Path("receipt/run.json").write_text(json.dumps(receipt, indent=2) + "\n")
+                  print(json.dumps(receipt))
+                  break
+          else:
+              raise SystemExit("Dispatch accepted but run receipt not found.")
+
+      - name: Save receipt
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pkx110-receipt-${{ github.run_id }}
+          path: receipt/
+          retention-days: 7
