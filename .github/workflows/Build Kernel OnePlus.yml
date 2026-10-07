@@ -701,8 +701,8 @@ jobs:
           cd susfs4ksu
           SUSFS_VERSION=$(awk -F= '$1=="version" {print $2}' ksu_module_susfs/module.prop | head -n1)
           case "$SUSFS_VERSION" in
-            2.3.0*) ;;
-            *) echo "❌ Unexpected SUSFS version: $SUSFS_VERSION (expected 2.3.0)"; exit 15 ;;
+            v2.3.0*|2.3.0*) ;;
+            *) echo "❌ Unexpected SUSFS version: $SUSFS_VERSION (expected v2.3.0)"; exit 15 ;;
           esac
           echo "SUSFS_COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
           echo "SUSFS_VERSION=$SUSFS_VERSION" >> "$GITHUB_ENV"
