@@ -29,6 +29,8 @@ jobs:
           grep -q 'SUSFS_INSTALLED_CODE' templates/anykernel.sh
           grep -q '__UNICODE__' templates/anykernel.sh
           grep -q '__FUSE_BPF__' templates/anykernel.sh
+          grep -q 'Apply Pad Pro FUSE-BPF lookup revalidation' '.github/workflows/Build Kernel OnePlus.yml'
+          grep -q 'storage-fix-status.txt' '.github/workflows/Build Kernel OnePlus.yml'
           if grep -q '零宽修复：已启用' templates/anykernel.sh; then
             echo "❌ misleading hard-coded zero-width status is still present"
             exit 1
