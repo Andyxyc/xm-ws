@@ -44,7 +44,7 @@ ui_print " 作者：心中都是莫"
 ui_print " Author: xiaomo"
 ui_print "========================================"
 
-# 只允许 OnePlus；具体机型由对应源码单独编译，包名会显示目标配置。
+# 只允许 OnePlus。
 BRAND="$(getprop ro.product.brand 2>/dev/null | tr '[:upper:]' '[:lower:]')"
 if [ -n "$BRAND" ]; then
   case "$BRAND" in
@@ -54,6 +54,18 @@ if [ -n "$BRAND" ]; then
       exit 1
       ;;
   esac
+fi
+
+# 对已配置的机型做专用校验。Pad Pro 使用 OPD2404。
+EXPECTED_DEVICE="__DEVICE_ID__"
+if [ -n "$EXPECTED_DEVICE" ]; then
+  DEVICE_INFO="$(getprop ro.product.device 2>/dev/null) $(getprop ro.build.product 2>/dev/null) $(getprop ro.product.vendor.device 2>/dev/null) $(getprop ro.vendor.product.device 2>/dev/null) $(getprop ro.product.model 2>/dev/null) $(getprop ro.product.marketname 2>/dev/null)"
+  if ! printf '%s' "$DEVICE_INFO" | grep -qi "$EXPECTED_DEVICE"; then
+    ui_print "❌ 机型不匹配，已停止。"
+    ui_print " 需要：$EXPECTED_DEVICE"
+    ui_print " 当前：$DEVICE_INFO"
+    exit 1
+  fi
 fi
 
 # 至少校验 Linux 内核主次版本，避免 5.10/5.15/6.1/6.6/6.12 跨代误刷。
