@@ -92,9 +92,9 @@ on:
         default: "Numbersf"
       BUILD_TIME:
         type: string
-        description: "xiaomo 构建时间；F=当前 UTC//xiaomo build timestamp"
+        description: "保持源码默认构建时间//Keep source default build time"
         required: false
-        default: "F"
+        default: "-1"
       KSU_META:
         type: string
         description: "管理器分支名(必填)/内置分支名(必填)/自定义版本标识(留空不修改)/回退分支提交哈希版本(留空不修改)//Manager Branch name (Required) / Builtin branch name (Required) / Custom version identifier (Leave blank to not modify) / Rollback branch commit hash version (Leave blank to not modify)"
@@ -112,11 +112,11 @@ on:
         default: "0/lz4kd/8589934592"
       SUFFIX:
         type: string
-        description: "兼容优先：默认不改 uname release；-1=保持源码//Compatibility-first kernel release"
+        description: "保持源码默认内核版本//Keep source default kernel release"
         required: false
         default: "-1"
       RESUBLEVEL:
-        description: "兼容优先：默认不改 SUBLEVEL//Compatibility-first SUBLEVEL"
+        description: "保持源码默认 SUBLEVEL//Keep source default SUBLEVEL"
         required: false
         default: ""
       FAST_BUILD:
@@ -1427,7 +1427,6 @@ jobs:
           git clone https://github.com/Numbersf/AnyKernel3 --depth=1
           rm -rf ./AnyKernel3/.git
           cp "$GITHUB_WORKSPACE/templates/anykernel.sh" ./AnyKernel3/anykernel.sh
-          cp "$GITHUB_WORKSPACE/templates/ak3-core.sh" ./AnyKernel3/tools/ak3-core.sh
           KERNEL_MM=$(echo "$CKERNEL_VERSION" | awk -F. '{print $1"."$2}')
           DEVICE_ID=""
           case "${{ github.event.inputs.FILE }}" in
