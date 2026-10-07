@@ -1,5 +1,5 @@
-name: Pad test
-run-name: pad-pro-alt-slot-spoof-${{ github.run_id }}
+name: Pad Pro Zero Width Test
+run-name: pad-pro-zero-width-${{ github.run_id }}
 on:
   workflow_dispatch:
   push:
@@ -81,6 +81,14 @@ jobs:
                   'scope': 'Source and patch checks, not real-device runtime validation'
               }, indent=2) + '\n')
               print(json.dumps(checks), flush=True)
+      - name: Validate zero-width patch source
+        run: |
+          set -e
+          grep -q 'static void ignore_init' patches/unicode_bypass_fix_6.1+.patch
+          grep -q -- '-[[:space:]]*ignore_init();' patches/unicode_bypass_fix_6.1+.patch
+          grep -q 'utf8data.c_shipped' patches/unicode_bypass_fix_6.1+.patch
+          echo "Zero-width bypass patch source is present and will be applied by the child build"
+
       - name: Start Android 16 Pad Pro fix build
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -103,7 +111,7 @@ jobs:
           target = 'oneplus_pad_pro_b'
           workflow = urllib.parse.quote('Build Kernel OnePlus.yml', safe='')
           path = '/actions/workflows/' + workflow
-          inputs = dict(FILE=target, SUSFS_CI='Release', KPM='KPM', SUSFS_META='', DYNAMIC_REPO='Numbersf', BUILD_TIME='-1', KSU_META='main/builtin/xiaomo/70fa0e092a2c81060823f8ae526eac14fdda2930', LZ4_UPDATE='false', ZRAM='0/lz4kd/8589934592', SUFFIX='-1', RESUBLEVEL='', FAST_BUILD='true', LSM_BBG='false', NETFILTER='true', CCM='false', UNICODE_BYPASS='true', SCHED_HMBIRD='true', DROID_SPACES='false', RE_KERNEL='false', SUSFS_DEV='false', SPACE_NOCLEAN='true', BUILD_NOCACHE='false')
+          inputs = dict(FILE=target, SUSFS_CI='Release', KPM='KPM', SUSFS_META='', DYNAMIC_REPO='Numbersf', BUILD_TIME='-1', KSU_META='main/builtin/xiaomo/70fa0e092a2c81060823f8ae526eac14fdda2930', LZ4_UPDATE='false', ZRAM='0/lz4kd/8589934592', SUFFIX='-1', RESUBLEVEL='', FAST_BUILD='true', LSM_BBG='false', NETFILTER='true', CCM='false', UNICODE_BYPASS='true', SCHED_HMBIRD='false', DROID_SPACES='false', RE_KERNEL='false', SUSFS_DEV='false', SPACE_NOCLEAN='true', BUILD_NOCACHE='false')
           Path('receipts').mkdir(exist_ok=True)
           before = {run['id'] for run in api(path+'/runs?per_page=30')['workflow_runs']}
           api(path+'/dispatches', {'ref':branch, 'inputs':inputs})
@@ -119,7 +127,7 @@ jobs:
                   Path('receipts/dispatch.json').write_text(json.dumps(receipt,indent=2)+'\n')
                   print(json.dumps(receipt),flush=True)
                   with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as summary:
-                      summary.write('Pad Pro Android 16 UAPI fix build: '+run['html_url']+'\n')
+                      summary.write('Pad Pro Android 16 zero-width test build: '+run['html_url']+'\n')
                   break
           else:
               raise SystemExit('Dispatch accepted but receipt not found; do not blindly re-dispatch.')
