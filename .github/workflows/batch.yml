@@ -90,8 +90,14 @@ jobs:
           fields = doc['on']['workflow_dispatch']['inputs']
           devices = fields['FILE']['options']
           pilots = ['oneplus_10_pro_b', 'oneplus_11_b', 'oneplus_12_b', 'oneplus_13_b', 'oneplus_15', 'oneplus_pad_pro_b']
+          historical = json.loads(Path('reference/123pan-historical-matrix.json').read_text(encoding='utf-8'))
+          historical_configs = {row['config'] for row in historical['models']}
+          missing_historical = sorted(historical_configs - set(devices))
+          if len(historical['models']) != 29 or missing_historical:
+              raise SystemExit('Historical support matrix is incomplete: ' + ', '.join(missing_historical))
           if len(devices) != len(set(devices)) or len(devices) != 58 or not set(pilots).issubset(devices):
               raise SystemExit('Unexpected device matrix; no dispatch performed.')
+          print(f'Historical support coverage: {len(historical_configs)}/29 configs present; total build configs={len(devices)}', flush=True)
           values = {key: value.get('default', '') for key, value in fields.items()}
           values.update(SUSFS_CI='Release', KPM='KPM', SUSFS_META='', BUILD_TIME='-1',
                         KSU_META='main/builtin/xiaomo/70fa0e092a2c81060823f8ae526eac14fdda2930',
