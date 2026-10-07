@@ -149,6 +149,11 @@ on:
         description: "Unicode invisible/zero-width bypass fix"
         required: true
         default: true
+      FUSE_BPF_REVALIDATE:
+        type: boolean
+        description: "Pad Pro FUSE-BPF lookup revalidation fix (kernel-side, no LSPosed)"
+        required: true
+        default: true
       SCHED_HMBIRD:
         type: boolean
         description: "Auto preserve/apply supported HMBIRD"
@@ -1023,8 +1028,853 @@ jobs:
 
           git diff -- fs/unicode/utf8-norm.c | grep -qF "if (*LEAF_STR(leaf) == '\\0')"
           echo "XIAOMO_UNICODE_STATUS=runtime_utf8_norm" >> "$GITHUB_ENV"
+          echo "XIAOMO_UNICODE_DISPLAY=runtime utf8-norm" >> "$GITHUB_ENV"
           echo "XIAOMO_UNICODE_SOURCE=WildKernels/kernel_patches@5757dbf56aab12356324bf1d58e8699cdfe1dcc6" >> "$GITHUB_ENV"
           echo "✅ Unicode zero-width runtime normalization fix applied and verified"
+
+          source "$REJ_CHECKER"
+          check_rejects .
+
+      - name: Apply Pad Pro FUSE-BPF lookup revalidation
+        if: ${{ github.event.inputs.FUSE_BPF_REVALIDATE == 'true' && (github.event.inputs.FILE == 'oneplus_pad_pro_b' || github.event.inputs.FILE == 'oneplus_pad_pro_v') }}
+        run: |
+          set -euo pipefail
+          PATCH_DIR="${GITHUB_WORKSPACE}/kernel_workspace/Action-Build/patches"
+          PATCH_FILE="${PATCH_DIR}/fuse_bpf_lookup_revalidate_6.1.patch"
+          cd kernel_workspace/kernel_platform/common
+
+          if [ "${VERSIONLEVEL}" -ne 6 ] || [ "${PATCHLEVEL}" -ne 1 ]; then
+            echo "❌ FUSE-BPF lookup revalidation patch is pinned to Linux 6.1; got ${VERSIONLEVEL}.${PATCHLEVEL}"
+            exit 1
+          fi
+          test -f "$PATCH_FILE"
+          test -f fs/fuse/backing.c
+          test -f fs/fuse/dir.c
+          test -f fs/fuse/fuse_i.h
+          grep -q '^CONFIG_FUSE_BPF=y        if: ${{ github.event.inputs.RE_KERNEL == 'true' }}
+        run: |
+          RE_DIR="${GITHUB_WORKSPACE}/kernel_workspace/Re-Kernel/LKM-Source"
+          cd kernel_workspace/kernel_platform/common
+          sed -i '/endmenu/i source "drivers/rekernel/Kconfig"' drivers/Kconfig
+          sed -i '$a \#Re-Kernel Support\nobj-$(CONFIG_REKERNEL) += rekernel/' drivers/Makefile
+          mkdir -p drivers/rekernel
+          cp -r "${RE_DIR}"/* drivers/rekernel/
+          if [ -f BUILD.bazel ]; then
+            sed -i '0,/name = "kernel_aarch64",/{/module_implicit_outs/s|,$| + ["drivers/rekernel/rekernel.ko"],|}' BUILD.bazel
+          fi
+
+      - name: Apply DROID_SPACES
+        env:
+          FILE: ${{ github.event.inputs.FILE }}
+        if: ${{ github.event.inputs.DROID_SPACES == 'true' }}
+        run: |
+          PATCH_DIR="${GITHUB_WORKSPACE}/kernel_workspace/Action-Build/patches"
+          cd kernel_workspace/kernel_platform/common
+          # 注释掉原始的 sysv 结构体定义
+          sed -i 's/^\(\t\)struct sysv_sem\b.*sysvsem;/\1\/\/ struct sysv_sem\t\t\tsysvsem;/' include/linux/sched.h
+          sed -i 's/^\(\t\)struct sysv_shm\b.*sysvshm;/\1\/\/ struct sysv_shm\t\t\tsysvshm;/' include/linux/sched.h
+
+          if [ "$KMI" = "android12-5.10" ]; then
+            echo "为 android12-5.10 修复 sysvipc KABI 绕过及 POSIX_MQUEUE ABI 填充问题..."
+            sed -i '/^\tconst struct sched_class\t\*sched_class;/a \\n#ifndef __GENKSYMS__\n\tstruct sysv_sem\t\t\tsysvsem;\n\tstruct sysv_shm\t\t\tsysvshm;\n#endif\n' include/linux/sched.h
+            sed -i 's/^\tunsigned long mq_bytes;\t\/\* How many bytes can be allocated to mqueue[?] \*\//\t\/\/unsigned long mq_bytes;\t\/* How many bytes can be allocated to mqueue? *\//' include/linux/sched/user.h
+            sed -i '/struct ratelimit_state ratelimit;/,/ANDROID_OEM_DATA_ARRAY(1, 2);/{/^\tANDROID_KABI_RESERVE(1);/{N;N;s/^\tANDROID_KABI_RESERVE(1);\n\tANDROID_KABI_RESERVE(2);\n\tANDROID_OEM_DATA_ARRAY(1, 2);/#if defined(CONFIG_POSIX_MQUEUE)\n\tANDROID_KABI_USE(1, unsigned long mq_bytes);\n\tANDROID_KABI_RESERVE(2);\n\tANDROID_OEM_DATA_ARRAY(1, 2);\n#else\n\tANDROID_KABI_RESERVE(1);\n\tANDROID_KABI_RESERVE(2);\n\tANDROID_OEM_DATA_ARRAY(1, 2);\n#endif/}}' include/linux/sched/user.h
+          # 检查 sched.h 并修改 KABI 槽位或指针
+          elif grep -q "sched_dl_entity.*\*dl_server" include/linux/sched.h; then
+            echo "✅ 检测到 dl_server 指针，使用 packed union 方案"
+            sed -i 's|\tstruct sched_entity\t\tse;|#ifdef CONFIG_SYSVIPC\n\tunion {\n\t\tchar __kabi_ignored_0;\n\t\tstruct sysv_sem\t\t\tsysvsem;\n\t}__attribute__((packed));\n\tunion {\n\t\tchar __kabi_ignored_1;\n\t\tstruct sysv_shm\t\t\tsysvshm;\n\t}__attribute__((packed));\n#endif\n\n\tstruct sched_entity\t\tse;|' include/linux/sched.h
+          elif grep -q "ANDROID_KABI_USE(1," include/linux/sched.h; then
+            echo "✅ 检测到 USE(1)，使用槽位 6,7,8"
+            sed -i -e '/ANDROID_KABI_RESERVE(6);/{N;N;s|\tANDROID_KABI_RESERVE(6);\n\tANDROID_KABI_RESERVE(7);\n\tANDROID_KABI_RESERVE(8);|#ifdef CONFIG_SYSVIPC\n\tANDROID_KABI_USE(6, struct sysv_sem sysvsem);\n\t_ANDROID_KABI_REPLACE(ANDROID_KABI_RESERVE(7); ANDROID_KABI_RESERVE(8), struct sysv_shm sysvshm);\n#else\n\tANDROID_KABI_RESERVE(6);\n\tANDROID_KABI_RESERVE(7);\n\tANDROID_KABI_RESERVE(8);\n#endif|;}' include/linux/sched.h
+          elif grep -q "ANDROID_KABI_RESERVE(1);" include/linux/sched.h; then
+            echo "✅ 检测到 RESERVE(1)，使用槽位 1,2,3"
+            sed -i -e '/ANDROID_KABI_RESERVE(1);/{N;N;N;N;N;N;N;s|\tANDROID_KABI_RESERVE(1);\n\tANDROID_KABI_RESERVE(2);\n\tANDROID_KABI_RESERVE(3);\n\tANDROID_KABI_RESERVE(4);\n\tANDROID_KABI_RESERVE(5);\n\tANDROID_KABI_RESERVE(6);\n\tANDROID_KABI_RESERVE(7);\n\tANDROID_KABI_RESERVE(8);|#ifdef CONFIG_SYSVIPC\n\tANDROID_KABI_USE(1, struct sysv_sem sysvsem);\n\t_ANDROID_KABI_REPLACE(ANDROID_KABI_RESERVE(2); ANDROID_KABI_RESERVE(3), struct sysv_shm sysvshm);\n#else\n\tANDROID_KABI_RESERVE(1);\n\tANDROID_KABI_RESERVE(2);\n\tANDROID_KABI_RESERVE(3);\n#endif\n\tANDROID_KABI_RESERVE(4);\n\tANDROID_KABI_RESERVE(5);\n\tANDROID_KABI_RESERVE(6);\n\tANDROID_KABI_RESERVE(7);\n\tANDROID_KABI_RESERVE(8);|;}' include/linux/sched.h
+          elif grep -q "ANDROID_KABI_RESERVE(3);" include/linux/sched.h; then
+            echo "✅ fallback，使用槽位 3,4,5"
+            sed -i -e '/ANDROID_KABI_RESERVE(3);/{N;N;N;s|\tANDROID_KABI_RESERVE(3);\n\tANDROID_KABI_RESERVE(4);\n\tANDROID_KABI_RESERVE(5);\n\tANDROID_KABI_RESERVE(6);|#ifdef CONFIG_SYSVIPC\n\tANDROID_KABI_USE(3, struct sysv_sem sysvsem);\n\t_ANDROID_KABI_REPLACE(ANDROID_KABI_RESERVE(4); ANDROID_KABI_RESERVE(5), struct sysv_shm sysvshm);\n#else\n\tANDROID_KABI_RESERVE(3);\n\tANDROID_KABI_RESERVE(4);\n\tANDROID_KABI_RESERVE(5);\n#endif\n\tANDROID_KABI_RESERVE(6);|;}' include/linux/sched.h
+          else
+            echo "❌ 无法通过上下文精准匹配 KABI 槽位或对应指针"
+            exit 9
+          fi
+
+          echo "为 oplus_bsp_midas 模块返回幽灵任务以避免空指针崩溃..."
+          patch -p1 --forward < "${PATCH_DIR}/ghost-task-for-midas.patch" || true
+
+          if [ "$KMI" = "android16-6.12" ]; then
+            rm -f include/uapi/linux/ntsync.h
+            rm -f drivers/misc/ntsync.c
+            echo "补全 IPC NS 符号导出..."
+            if ! grep -q 'EXPORT_SYMBOL.*put_ipc_ns' ./ipc/namespace.c; then
+              echo -e '\nEXPORT_SYMBOL_GPL(put_ipc_ns);' >> ./ipc/namespace.c
+            fi
+            if ! grep -q 'EXPORT_SYMBOL.*init_ipc_ns' ./ipc/msgutil.c; then
+              echo -e '\nEXPORT_SYMBOL_GPL(init_ipc_ns);' >> ./ipc/msgutil.c
+            fi
+          fi
+          echo "拓展 ntsync 支持..."
+          patch -p1 --forward < "${PATCH_DIR}/ntsync/ntsync_base.patch" || true
+          if [[ "$FILE" == oneplus_10r* ]]; then
+            patch -p1 --forward < "${PATCH_DIR}/ntsync/ntsync_compat_android12-5.10_14.patch" || true
+          else
+            patch -p1 --forward < "${PATCH_DIR}/ntsync/ntsync_compat_$([ -f "${PATCH_DIR}/ntsync/ntsync_compat_${KMI}_${ANDROID_SHORT_VERSION}.patch" ] && echo "${KMI}_${ANDROID_SHORT_VERSION}" || echo "${KMI}").patch" || true
+          fi
+          source $REJ_CHECKER
+          check_rejects .
+
+      - name: Apply LZ4_DEV
+        if: ${{ github.event.inputs.LZ4_UPDATE == 'true' }}
+        run: |
+          set -euo pipefail
+          LZ4_REPO="${GITHUB_WORKSPACE}/kernel_workspace/lz4_oplus"
+          cd kernel_workspace/kernel_platform/common
+          . "${LZ4_REPO}/apply_lz4_oplus.sh"
+
+      - name: Apply ZRAM
+        if: startsWith(github.event.inputs.ZRAM, '1/')
+        run: |
+          ZRAM="${{ github.event.inputs.ZRAM }}"
+          if [[ "$(grep -o '/' <<< "$ZRAM" | wc -l)" -lt 2 ]]; then
+            echo "错误: ZRAM 参数缺少必要的分隔符 '/'，格式应为: 总开关0关1开/算法名(前面输入0时无效)/大小(前面输入0时无效)"
+            exit 10
+          fi
+          # 解析字段：开关状态 / 算法名 / 大小
+          IFS='/' read -r ZRAM_SWSTA ZRAM_ALGO ZRAM_SIZE <<< "$ZRAM"
+          echo "ZRAM_ALGO=$ZRAM_ALGO" >> $GITHUB_ENV
+          echo "ZRAM_ALGO_U=${ZRAM_ALGO^^}" >> $GITHUB_ENV
+          echo "ZRAM_SIZE=$ZRAM_SIZE" >> $GITHUB_ENV
+
+          PATCH_DIR="${GITHUB_WORKSPACE}/kernel_workspace/SukiSU_patch/other/zram/zram_patch/${{ env.KERNEL_VERSION }}"
+          cd kernel_workspace/kernel_platform/common
+          if [[ "$KERNEL_VERSION" == "5.10" && "${CPU}" == mt* ]]; then
+            sed -i 's/select CRYPTO_LZO/depends on CRYPTO_LZO/' ./mm/oplus_mm/hybridswap_zram/Kconfig
+          fi
+          echo "正在打lz4kd补丁"
+          patch -p1 -F 3 < "${PATCH_DIR}/lz4kd.patch" || true
+          echo 'lz4kd_patch完成'
+          echo "正在打lz4k_oplus补丁"
+          patch -p1 -F 3 < "${PATCH_DIR}/lz4k_oplus.patch" || true
+          echo 'lz4k_oplus_patch完成'
+          source $REJ_CHECKER
+          check_rejects .
+
+      - name: Apply SCHED_HMBIRD
+        env:
+          FILE: ${{ github.event.inputs.FILE }}
+        if: ${{ github.event.inputs.SCHED_HMBIRD == 'true' }}
+        run: |
+          set -e
+          cd kernel_workspace/kernel_platform/common
+          CLEAN_FILE="${FILE//_bak/}"
+
+          # 已经确认原生启用或已完成 OGKI→GKI 兼容时，不重复打第三方调度补丁。
+          if [ "${XIAOMO_HMBIRD_ACTIVE:-false}" = "true" ]; then
+            echo "✅ HMBIRD 已确认：${XIAOMO_HMBIRD_DISPLAY:-已启用}"
+            exit 0
+          fi
+
+          # 低版本若检测到官方 OGKI，则原样保留，不强制转换。
+          if [ "${XIAOMO_HMBIRD_MODE:-none}" = "ogki" ]; then
+            echo "XIAOMO_HMBIRD_ACTIVE=true" >> "$GITHUB_ENV"
+            echo "XIAOMO_HMBIRD_STATUS=native_ogki" >> "$GITHUB_ENV"
+            echo "XIAOMO_HMBIRD_DISPLAY=原厂支持（HMBIRD_OGKI）" >> "$GITHUB_ENV"
+            echo "✅ 原样保留官方 HMBIRD_OGKI"
+            exit 0
+          fi
+
+          # 源码只有公共组件但没有设备级启用标记时，不冒充“原生已启用”，继续尝试机型补丁。
+          if ! git clone https://github.com/Numbersf/SCHED_PATCH.git -b "$CPU"; then
+            echo "ℹ️ 没有该 CPU 的风驰补丁"
+            exit 0
+          fi
+
+          if [ -f "./SCHED_PATCH/fengchi_${CLEAN_FILE}.patch" ]; then
+            cp "./SCHED_PATCH/fengchi_${CLEAN_FILE}.patch" ./
+            dos2unix "fengchi_${CLEAN_FILE}.patch"
+            patch -p1 -F 3 < "fengchi_${CLEAN_FILE}.patch"
+            source "$REJ_CHECKER"
+            check_rejects .
+            echo "XIAOMO_HMBIRD_ACTIVE=true" >> "$GITHUB_ENV"
+            echo "XIAOMO_HMBIRD_DETECTED=true" >> "$GITHUB_ENV"
+            echo "XIAOMO_HMBIRD_STATUS=patched" >> "$GITHUB_ENV"
+            echo "XIAOMO_HMBIRD_DISPLAY=补丁适配" >> "$GITHUB_ENV"
+            echo "✅ 风驰补丁已成功应用"
+          else
+            echo "ℹ️ 当前机型无匹配风驰补丁；状态保持：${XIAOMO_HMBIRD_DISPLAY:-未检测到支持}"
+          fi
+
+      - name: Apply LSM_BBG
+        if: ${{ github.event.inputs.LSM_BBG == 'true' }}
+        run: |
+          cd kernel_workspace/kernel_platform/common
+          echo "正在启用内核级基带保护支持…"
+          curl -LSs https://raw.githubusercontent.com/vc-teahouse/Baseband-guard/main/setup.sh | bash
+          sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' ./security/Kconfig
+
+      # 配置信息，带*为附加项目，具有一定危险性和不确定性
+      - name: Add Configuration Settings
+        run: |
+          cd kernel_workspace/kernel_platform/common
+          CONFIG_FILE=./arch/arm64/configs/gki_defconfig
+          MAKEFILE=./kernel/Makefile
+
+          declare -a HIDE_CONFIGS=()
+
+          set_config() {
+            local val="$1"
+            local key="${val%%=*}"
+            if grep -qF "${key}=" "$CONFIG_FILE" || grep -qF "# ${key} is not set" "$CONFIG_FILE"; then
+              VAL="$val" awk -v key="$key" '
+                $0 == "# " key " is not set" || index($0, key "=") == 1 { print ENVIRON["VAL"]; next }
+                { print }
+              ' "$CONFIG_FILE" > "${CONFIG_FILE}.tmp" && mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE" || rm -f "${CONFIG_FILE}.tmp"
+            else
+              printf '%s\n' "$val" >> "$CONFIG_FILE"
+            fi
+          }
+
+          set_hide_config() {
+            local val="$1"
+            local key="${val%%=*}"
+            set_config "$val"
+            HIDE_CONFIGS+=("$key")
+          }
+
+          inject_fake_config() {
+            [ "${#HIDE_CONFIGS[@]}" -eq 0 ] && return 0
+            local marker="# --- fake_config injector ---"
+            if ! grep -qF "$marker" "$MAKEFILE"; then
+              {
+                printf '\n%s\n' "$marker"
+                printf 'ifneq ($(strip $(CONFIG_FAKE_DISABLE)),)\n'
+                printf '$(obj)/config_data: $(KCONFIG_CONFIG) FORCE\n'
+                printf '\t$(Q)sed $(foreach opt,$(CONFIG_FAKE_DISABLE),-e '"'"'s|^$(opt)=.*|# $(opt) is not set|'"'"') $(KCONFIG_CONFIG) > $@\n'
+                printf 'endif\n'
+              } >> "$MAKEFILE"
+            fi
+            echo "CONFIG_FAKE_DISABLE=${HIDE_CONFIGS[*]}" >> "$GITHUB_ENV"
+          }
+          trap 'inject_fake_config' EXIT
+
+          # SukiSU Ultra配置
+          set_config "CONFIG_KSU=y"
+
+          # KPM配置
+          if [ "${{ github.event.inputs.KPM }}" = "KPM" ] || [ "${{ github.event.inputs.KPM }}" = "N/A" ]; then
+            set_config "CONFIG_KPM=y"
+          fi
+          if [ "${{ github.event.inputs.KPM }}" = "KPN" ]; then
+            set_config "CONFIG_KPM=n"
+          fi
+
+          # SUSFS配置
+          if [ "${{ github.event.inputs.SUSFS_META }}" != "-1" ]; then
+            set_config "CONFIG_KSU_SUSFS=y"
+            set_config "CONFIG_KSU_SUSFS_SUS_PATH=y"
+            set_config "CONFIG_KSU_SUSFS_SUS_MAP=y"
+            set_config "CONFIG_KSU_SUSFS_SUS_MOUNT=y"
+            set_config "CONFIG_KSU_SUSFS_SUS_KSTAT=y"
+            set_config "CONFIG_KSU_SUSFS_SPOOF_UNAME=y"
+            set_config "CONFIG_KSU_SUSFS_ENABLE_LOG=y"
+            set_config "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y"
+            set_config "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y"
+            set_config "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"
+          else
+            set_config "CONFIG_KSU_SUSFS=n"
+          fi
+
+          # TMPFS配置*
+          set_config "CONFIG_TMPFS_XATTR=y"
+          set_config "CONFIG_TMPFS_POSIX_ACL=y"
+
+          # BBR & ECN配置*
+          if [ "${{ github.event.inputs.CCM }}" = "true" ]; then
+            set_hide_config "CONFIG_TCP_CONG_ADVANCED=y"
+            set_config "CONFIG_TCP_CONG_BBR=y"
+            if [ "$KMI" != "android16-6.12" ]; then
+              set_config "CONFIG_TCP_CONG_BBR3=y"
+            fi
+            set_config "CONFIG_NET_SCH_FQ=y"
+            set_config "CONFIG_TCP_CONG_BIC=n"
+            set_config "CONFIG_TCP_CONG_WESTWOOD=n"
+            set_config "CONFIG_TCP_CONG_HTCP=n"
+            set_config "CONFIG_IP_ECN=y"
+            set_config "CONFIG_TCP_ECN=y"
+            set_config "CONFIG_IPV6_ECN=y"
+            set_config "CONFIG_IP_NF_TARGET_ECN=y"
+          fi
+
+          # Re-Kernel配置*
+          if [ "${{ github.event.inputs.RE_KERNEL }}" = "true" ]; then
+            set_config "CONFIG_REKERNEL=y"
+            set_config "CONFIG_REKERNEL_NETWORK=y"
+          fi
+
+          # ZRAM配置*
+          if [[ "${{ github.event.inputs.ZRAM }}" == 1* ]]; then
+            set_config "CONFIG_CRYPTO_LZ4HC=y"
+            set_config "CONFIG_CRYPTO_LZ4K=y"
+            set_config "CONFIG_CRYPTO_LZ4KD=y"
+            set_config "CONFIG_CRYPTO_842=y"
+            set_config "CONFIG_CRYPTO_LZ4K_OPLUS=y"
+            set_config "CONFIG_ZRAM_WRITEBACK=y"
+          fi
+
+          # LSM配置*
+          if [ "${{ github.event.inputs.LSM_BBG }}" = "true" ]; then
+            set_config "CONFIG_BBG=y"
+          fi
+
+          # DROID_SPACES配置*
+          if [ "${{ github.event.inputs.DROID_SPACES }}" = "true" ]; then
+            set_config "CONFIG_NTSYNC=y"
+            set_config "CONFIG_SYSVIPC=y"
+            set_config "CONFIG_DEVTMPFS=y"
+            set_config "CONFIG_PID_NS=y"
+            set_config "CONFIG_IPC_NS=y"
+            set_config "CONFIG_USER_NS=y"
+            set_config "CONFIG_NAMESPACES=y"
+            set_config "CONFIG_POSIX_MQUEUE=y"
+            set_config "CONFIG_NETFILTER_XT_TARGET_REJECT=y"
+            set_config "CONFIG_NETFILTER_XT_TARGET_LOG=y"
+            set_config "CONFIG_NETFILTER_XT_MATCH_RECENT=y"
+          fi
+
+          # IPSET & IPv6_NAT & TTL配置*
+          if [ "${{ github.event.inputs.NETFILTER }}" = "true" ]; then
+            if [[ "$KERNEL_VERSION" != "6.12" && "${CPU}" != mt* ]]; then
+              set_config "CONFIG_BPF_STREAM_PARSER=y"
+            fi
+            set_config "CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y"
+            set_config "CONFIG_NETFILTER_XT_SET=y"
+            set_config "CONFIG_IP_SET=y"
+            set_config "CONFIG_IP_SET_MAX=65534"
+            set_config "CONFIG_IP_SET_BITMAP_IP=y"
+            set_config "CONFIG_IP_SET_BITMAP_IPMAC=y"
+            set_config "CONFIG_IP_SET_BITMAP_PORT=y"
+            set_config "CONFIG_IP_SET_HASH_IP=y"
+            set_config "CONFIG_IP_SET_HASH_IPMARK=y"
+            set_config "CONFIG_IP_SET_HASH_IPPORT=y"
+            set_config "CONFIG_IP_SET_HASH_IPPORTIP=y"
+            set_config "CONFIG_IP_SET_HASH_IPPORTNET=y"
+            set_config "CONFIG_IP_SET_HASH_IPMAC=y"
+            set_config "CONFIG_IP_SET_HASH_MAC=y"
+            set_config "CONFIG_IP_SET_HASH_NETPORTNET=y"
+            set_config "CONFIG_IP_SET_HASH_NET=y"
+            set_config "CONFIG_IP_SET_HASH_NETNET=y"
+            set_config "CONFIG_IP_SET_HASH_NETPORT=y"
+            set_config "CONFIG_IP_SET_HASH_NETIFACE=y"
+            set_config "CONFIG_IP_SET_LIST_SET=y"
+            set_hide_config "CONFIG_IP6_NF_NAT=y"
+            set_config "CONFIG_IP6_NF_TARGET_MASQUERADE=y"
+            set_config "CONFIG_NETFILTER_XT_TARGET_HL=y"
+            set_config "CONFIG_IP_NF_TARGET_TTL=y"
+            set_config "CONFIG_IP6_NF_TARGET_HL=y"
+            set_config "CONFIG_NETFILTER_XT_MATCH_HL=y"
+            set_config "CONFIG_IP_NF_MATCH_TTL=y"
+            set_config "CONFIG_IP6_NF_MATCH_HL=y"
+            set_config "CONFIG_IP_NF_MANGLE=y"
+            set_config "CONFIG_IP6_NF_MANGLE=y"
+          fi
+
+          # 构建依赖项调整及优化
+          if [ "$KERNEL_VERSION" = "5.15" ] && [[ "$CPU" == mt* ]]; then
+            set_config "CONFIG_OPLUS_SYSTEM_KERNEL=y"
+            set_config "CONFIG_OPLUS_FEATURE_CMDLINE=m"
+            set_config "CONFIG_OPLUS_FEATURE_OPLUSBOOT=m"
+            set_config "CONFIG_OPLUS_FEATURE_BUILDVARIANT=m"
+            set_config "CONFIG_OPLUS_FEATURE_OPROJECT=m"
+          fi
+          if [[ "$ENABLE_RUST" == "true" ]]; then
+            set_config "CONFIG_RUST=y"
+            set_config "CONFIG_ANDROID_BINDER_IPC_RUST=m"
+          fi
+
+      # Custom kernel build time, without adding #1 SMP PREEMPT 自定义内核构建时间，不要加入#1 SMP PREEMPT
+      - name: Custom BUILD_TIME
+        if: ${{ github.event.inputs.BUILD_TIME != '-1' }}
+        shell: bash
+        run: |
+          INPUT_TIME="${{ github.event.inputs.BUILD_TIME }}"
+          if [[ -n "$INPUT_TIME" && "$INPUT_TIME" != "F" ]]; then
+            DATESTR="$INPUT_TIME"
+            echo "Using input BUILD_TIME: $DATESTR"
+          else
+            DATESTR="$(TZ='UTC' date +'%a %b %d %T %Z %Y')"
+            echo "Using UTC time as fallback: $DATESTR"
+          fi
+          echo "KBUILD_BUILD_TIMESTAMP=${DATESTR}" >> "$GITHUB_ENV"
+          echo "KBUILD_BUILD_VERSION=1" >> "$GITHUB_ENV"
+          cd kernel_workspace/kernel_platform/
+          for f in ./common/scripts/mkcompile_h ./"$KERNEL_REPOS"/scripts/mkcompile_h; do
+            if [ -f "$f" ]; then
+              echo "Patching mkcompile_h with BUILD_TIME=$DATESTR"
+              if grep -q 'UTS_VERSION=' "$f"; then
+                perl -pi -e "s{UTS_VERSION=\"\\\$\\(.*?\\)\"}{UTS_VERSION=\"#1 SMP PREEMPT $DATESTR\"}" "$f"
+              else
+                perl -0777 -pi -e "s{cat <<EOF}{cat <<EOF\n#undef UTS_VERSION\n#define UTS_VERSION \"#1 SMP PREEMPT $DATESTR\" } unless /UTS_VERSION/" "$f"
+              fi
+            fi
+          done
+
+      - name: Disable GPUEB
+        if: ${{ env.KERNEL_VERSION == '5.10' && startsWith(env.CPU, 'mt') }}
+        run: |
+          echo "Disabling GPUEB for MTK kernel 5.10"
+          sed -i '/obj-y.*gpueb/d' kernel_workspace/kernel-5.10/drivers/gpu/mediatek/Makefile
+
+      - name: Build Kernel FAST
+        if: ${{ github.event.inputs.FAST_BUILD == 'true' }}
+        id: fast_build
+        run: |
+          cd kernel_workspace/kernel_platform
+
+          # 自动检测 LLVM_IAS
+          if [[ -f ./common/build.config.arm ]] && grep -q '^LLVM_IAS=1' ./common/build.config.arm; then
+            USE_LLVM_IAS=true
+          else
+            USE_LLVM_IAS=false
+          fi
+
+          # 强制递推路径
+          CLANG_PREBUILT_NAME=$(find "$GITHUB_WORKSPACE/kernel_workspace/kernel_platform" -maxdepth 1 -type d -name 'prebuilts*' -exec test -d '{}/clang/host/linux-x86' \; -print | head -1)
+          CLANG_PREBUILT_NAME=$(basename "${CLANG_PREBUILT_NAME:-}")
+          echo "✅ CLANG_PREBUILT_NAME=$CLANG_PREBUILT_NAME"
+
+          KERNEL_BUILD_TOOLS_PREBUILT_NAME=$(find "$GITHUB_WORKSPACE/kernel_workspace/kernel_platform" -maxdepth 1 -type d -name 'prebuilts*' -exec test -d '{}/kernel-build-tools' \; -print | head -1)
+          KERNEL_BUILD_TOOLS_PREBUILT_NAME=$(basename "${KERNEL_BUILD_TOOLS_PREBUILT_NAME:-}")
+          echo "✅ KERNEL_BUILD_TOOLS_PREBUILT_NAME=$KERNEL_BUILD_TOOLS_PREBUILT_NAME"
+
+          if [[ "$ENABLE_RUST" == "true" ]]; then
+            RUST_TOOLS_PREBUILT_NAME=$(find "$GITHUB_WORKSPACE/kernel_workspace/kernel_platform" -maxdepth 1 -type d -name 'prebuilts*' -exec test -d '{}/rust' \; -print | head -1)
+            RUST_TOOLS_PREBUILT_NAME=$(basename "${RUST_TOOLS_PREBUILT_NAME:-}")
+            echo "✅ RUST_TOOLS_PREBUILT_NAME=$RUST_TOOLS_PREBUILT_NAME"
+          fi
+
+          # 从 build.config.common 读取 CLANG_PREBUILT_BIN，或者用递推路径 fallback
+          CLANG_PREBUILT_BIN=""
+          if [[ -f ./common/build.config.common ]]; then
+            CLANG_PREBUILT_BIN=$(grep '^CLANG_PREBUILT_BIN=' ./common/build.config.common | cut -d'=' -f2-)
+          fi
+
+          if [[ -z "$CLANG_PREBUILT_BIN" ]]; then
+            CLANG_PREBUILT_BIN="${CLANG_PREBUILT_NAME}/clang/host/linux-x86/clang-zakozako/bin"
+          fi
+
+          # 优先尝试从 CLANG_PREBUILT_BIN 识别出 clang-r，再去掉 clang-，作为 CLANG_VERSION
+          if [[ "$CLANG_PREBUILT_BIN" =~ clang-(r[0-9a-z]+) ]]; then
+            CLANG_VERSION="${BASH_REMATCH[1]}"
+          else
+            # 如果未匹配到，尝试从 build.config.constants 提取
+            if [[ -f ./common/build.config.constants ]]; then
+              CLANG_VERSION=$(grep '^CLANG_VERSION=' ./common/build.config.constants | cut -d'=' -f2 || true)
+            fi
+          fi
+
+          if [[ -z "$CLANG_VERSION" ]]; then
+            echo "⚠️ 未能从 CLANG_PREBUILT_BIN 或 build.config.constants 获取到 Clang 版本，回退至官方构建脚本"
+            echo "fallback=true" >> "$GITHUB_OUTPUT"
+            echo "请考虑关闭 FAST_BUILD 并提交问题"
+            exit 0
+          fi
+
+          CLANG_PREBUILT_BIN="${CLANG_PREBUILT_BIN/\$\{CLANG_VERSION\}/$CLANG_VERSION}"
+          CLANG_PREBUILT_BIN="${CLANG_PREBUILT_BIN/clang-zakozako/clang-${CLANG_VERSION}}"
+
+          echo "✅ CLANG_PREBUILT_BIN=$CLANG_PREBUILT_BIN"
+          echo "✅ CLANG_VERSION=$CLANG_VERSION"
+          echo "✅ USE_LLVM_IAS=$USE_LLVM_IAS"
+
+          set +u
+          source "$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/build/kernel/_setup_env.sh" 2>/dev/null || true
+          set -u
+
+          export PATH="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/$CLANG_PREBUILT_BIN:$PATH"
+          CLANG_LIB_PATH="${CLANG_PREBUILT_BIN%/bin}"
+          if [[ -d "$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/$CLANG_LIB_PATH/lib" ]]; then
+            export LIBCLANG_PATH="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/$CLANG_LIB_PATH/lib"
+          elif [[ -d "$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/clang-${CLANG_VERSION}/lib" ]]; then
+            export LIBCLANG_PATH="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/clang-${CLANG_VERSION}/lib"
+          else
+            export LIBCLANG_PATH="$(clang --print-resource-dir 2>/dev/null | sed 's|/lib/clang/.*||')/lib" 
+            echo "⚠️ LIBCLANG_PATH fallback to system: $LIBCLANG_PATH"
+          fi
+          echo "✅ LIBCLANG_PATH=$LIBCLANG_PATH"
+          export PATH="/usr/lib/ccache:$PATH"
+
+          # BINDGEN 检测与 fallback
+          if [[ "$ENABLE_RUST" == "true" ]]; then
+            BINDGEN_BIN="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/$CLANG_PREBUILT_NAME/clang-tools/linux-x86/bin/bindgen"
+            if [ -x "$BINDGEN_BIN" ]; then
+              export BINDGEN="$BINDGEN_BIN"
+              echo "✅ bindgen exists: $BINDGEN_BIN"
+            else
+              echo "⚠️ prebuilts bindgen 未找到，fallback 到 cargo 安装 bindgen 0.69.5"
+              echo "::group::Install bindgen via cargo"
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none
+              source "$HOME/.cargo/env"
+              cargo install bindgen-cli --version 0.69.5
+              echo "::endgroup::"
+              BINDGEN_BIN=$(which bindgen)
+              export BINDGEN="$BINDGEN_BIN"
+              echo "✅ BINDGEN_BIN (cargo): $BINDGEN_BIN"
+            fi
+          fi
+
+          # PAHOLE 检测与 fallback
+          PAHOLE_BIN="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/$KERNEL_BUILD_TOOLS_PREBUILT_NAME/kernel-build-tools/linux-x86/bin/pahole"
+          if [ ! -x "$PAHOLE_BIN" ]; then
+            PAHOLE_BIN="$(which pahole 2>/dev/null)"
+            [ -x "$PAHOLE_BIN" ] && echo "⚠️ pahole fallback to PATH: $PAHOLE_BIN"
+          fi
+          if [ -x "$PAHOLE_BIN" ]; then
+            echo "✅ pahole exists: $PAHOLE_BIN"
+          else
+            echo "❌ pahole 完全缺失，终止构建"
+            exit 13
+          fi
+
+          # RUSTC 检测与 fallback
+          if [[ "$ENABLE_RUST" == "true" ]]; then
+            RUSTC_BIN="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/$RUST_TOOLS_PREBUILT_NAME/rust/linux-x86/$RUSTC_DIR_VERSION/bin/rustc"
+            if [ ! -x "$RUSTC_BIN" ]; then
+              RUSTC_BIN="$(which rustc 2>/dev/null)"
+              [ -x "$RUSTC_BIN" ] && echo "⚠️ rustc fallback to PATH: $RUSTC_BIN"
+            fi
+            if [ -x "$RUSTC_BIN" ]; then
+              echo "✅ rustc exists: $RUSTC_BIN"
+              export RUSTC="$RUSTC_BIN"
+            else
+              echo "❌ rustc 完全缺失且 ENABLE_RUST=true，终止构建"
+              exit 13
+            fi
+          fi
+
+          LD_WRAPPER=""
+          if [ "${{ github.event.inputs.BUILD_NOCACHE }}" = "false" ] && [[ "$KERNEL_VERSION" == 5.* ]]; then
+            LDCACHE_DIR="${GITHUB_WORKSPACE}/kernel_workspace/.thinlto-cache"
+            mkdir -p "$LDCACHE_DIR"
+            LD_WRAPPER="${GITHUB_WORKSPACE}/kernel_workspace/ld-wrapper"
+            LLD_BIN="$(command -v ld.lld)"
+            if [[ -z "$LLD_BIN" ]]; then
+              echo "⚠️ ld.lld 未找到，无法创建 ld-wrapper"
+            fi
+            printf '#!/bin/bash\nexec "%s" "$@" --thinlto-cache-dir="%s" --thinlto-cache-policy=cache_size_bytes=3g --thinlto-jobs=%s\n' "$LLD_BIN" "$LDCACHE_DIR" "$(nproc --all)" > "$LD_WRAPPER"
+            chmod +x "$LD_WRAPPER"
+            echo "✅ ld-wrapper 已创建: $LD_WRAPPER (lld=$LLD_BIN, cache=$LDCACHE_DIR)"
+          fi
+
+          REAL_CLANG_BIN="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/$CLANG_PREBUILT_BIN/clang"
+          CC_WRAPPER="$GITHUB_WORKSPACE/kernel_workspace/cc-wrapper"
+          printf '#!/bin/bash\nexec ccache "%s" "$@"\n' "$REAL_CLANG_BIN" > "$CC_WRAPPER"
+          chmod +x "$CC_WRAPPER"
+          echo "✅ cc-wrapper 已创建: $CC_WRAPPER (clang=$REAL_CLANG_BIN)"
+
+          cd ./common
+
+          # 重映射物理路径
+          COMMON_REAL_PATH=$(pwd -P)
+          PLATFORM_REAL_PATH=$(dirname "$COMMON_REAL_PATH")
+          ROOT_REAL_PATH=$(dirname "$PLATFORM_REAL_PATH")
+          MAP="-fdebug-prefix-map=$ROOT_REAL_PATH=."
+          MPMAP="-fmacro-prefix-map=$ROOT_REAL_PATH=."
+          FPMAP="-ffile-prefix-map=$ROOT_REAL_PATH=."
+
+          # KCFLAGS
+          KCFLAGS="$MAP $FPMAP -no-canonical-prefixes -O2 -pipe -Wno-error -fno-stack-protector -D__ANDROID_COMMON_KERNEL__"
+          KCPPFLAGS="$MPMAP"
+
+          MAKE_ARGS=(
+            LLVM=1
+            ARCH=arm64
+            CROSS_COMPILE=aarch64-linux-gnu-
+            CC="$CC_WRAPPER"
+            HOSTCC="$CC_WRAPPER"
+            HOSTLD=ld.lld
+            PAHOLE="$PAHOLE_BIN"
+            KCFLAGS="$KCFLAGS"
+            KCPPFLAGS="$KCPPFLAGS"
+          )
+
+          if [[ -n "${CONFIG_FAKE_DISABLE:-}" ]]; then
+            MAKE_ARGS+=(CONFIG_FAKE_DISABLE="$CONFIG_FAKE_DISABLE")
+          fi
+          if [[ -n "$LD_WRAPPER" ]]; then
+            MAKE_ARGS+=(LD="$LD_WRAPPER")
+          else
+            MAKE_ARGS+=(LD=ld.lld)     
+          fi
+          if [[ "$USE_LLVM_IAS" == "true" ]]; then
+            MAKE_ARGS+=(LLVM_IAS=1)
+          fi
+          if [[ "$ENABLE_RUST" == "true" ]]; then
+            MAKE_ARGS+=(RUSTC="$RUSTC_BIN")
+            MAKE_ARGS+=(BINDGEN="$BINDGEN_BIN")
+          fi
+
+          make O=out "${MAKE_ARGS[@]}" gki_defconfig --no-print-directory
+
+          if [[ "$KERNEL_VERSION" == 5.* ]]; then
+            echo "# 设置 LTO = thin"
+            scripts/config --file out/.config -e LTO_CLANG
+            scripts/config --file out/.config -e LTO_CLANG_THIN
+            scripts/config --file out/.config -d LTO_CLANG_NONE
+            scripts/config --file out/.config -d LTO_CLANG_FULL
+          fi
+
+          make O=out "${MAKE_ARGS[@]}" olddefconfig --no-print-directory
+          make -j"$(nproc --all)" O=out "${MAKE_ARGS[@]}"
+          ccache -s
+
+      - name: Fallback to Build Kernel
+        if: ${{ github.event.inputs.FAST_BUILD == 'false' || steps.fast_build.outputs.fallback == 'true' }}
+        run: |
+          cd kernel_workspace
+          if [ -f ./kernel_platform/build_with_bazel.py ]; then
+            ./kernel_platform/oplus/bazel/oplus_modules_variant.sh ${{ env.CPUD }} ${{ env.BUILD_METHOD }}
+            ./kernel_platform/build_with_bazel.py -t ${{ env.CPUD }} ${{ env.BUILD_METHOD }}
+          else
+            LTO=thin SYSTEM_DLKM_RE_SIGN=0 BUILD_SYSTEM_DLKM=0 KMI_SYMBOL_LIST_STRICT_MODE=0 \
+            ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ env.CPUD }} ${{ env.BUILD_METHOD }}
+          fi
+
+      - name: Make AnyKernel3
+        run: |
+          git clone https://github.com/Numbersf/AnyKernel3 --depth=1
+          rm -rf ./AnyKernel3/.git
+          cp "$GITHUB_WORKSPACE/templates/anykernel.sh" ./AnyKernel3/anykernel.sh
+          KERNEL_MM=$(echo "$CKERNEL_VERSION" | awk -F. '{print $1"."$2}')
+          DEVICE_ID=""
+          case "${{ github.event.inputs.FILE }}" in
+            oneplus_pad_pro_v|oneplus_pad_pro_b) DEVICE_ID="OPD2404" ;;
+            oneplus_13t_b) DEVICE_ID="PKX110" ;;
+          esac
+          sed -i "s|__TARGET__|${{ steps.extract_info.outputs.value }}|g" ./AnyKernel3/anykernel.sh
+          sed -i "s|__KERNEL__|$CKERNEL_VERSION|g" ./AnyKernel3/anykernel.sh
+          sed -i "s|__KERNEL_MM__|$KERNEL_MM|g" ./AnyKernel3/anykernel.sh
+          sed -i "s|__DEVICE_ID__|$DEVICE_ID|g" ./AnyKernel3/anykernel.sh
+          FORCED_UNAME=""
+          if [ "${{ github.event.inputs.SOURCE_PROFILE }}" = "PKX110_16_0_10_500" ]; then
+            FORCED_UNAME="6.6.89-android15-4-0-ge85de9b64f78ac"
+          fi
+          sed -i "s|__FORCED_UNAME__|$FORCED_UNAME|g" ./AnyKernel3/anykernel.sh
+          HMBIRD_DISPLAY="${XIAOMO_HMBIRD_DISPLAY:-未检测到支持}"
+          UNICODE_DISPLAY="${XIAOMO_UNICODE_DISPLAY:-未加入}"
+          FUSE_BPF_DISPLAY="${XIAOMO_FUSE_BPF_DISPLAY:-未加入}"
+          sed -i "s|__HMBIRD__|$HMBIRD_DISPLAY|g" ./AnyKernel3/anykernel.sh
+          sed -i "s|__UNICODE__|$UNICODE_DISPLAY|g" ./AnyKernel3/anykernel.sh
+          sed -i "s|__FUSE_BPF__|$FUSE_BPF_DISPLAY|g" ./AnyKernel3/anykernel.sh
+          if grep -Eq '__HMBIRD__|__UNICODE__|__FUSE_BPF__' ./AnyKernel3/anykernel.sh; then
+            echo "❌ AK3 build-status placeholder was not replaced"
+            exit 1
+          fi
+          {
+            echo "HMBIRD_STATUS=${XIAOMO_HMBIRD_STATUS:-unsupported}"
+            echo "HMBIRD_DISPLAY=$HMBIRD_DISPLAY"
+            echo "HMBIRD_ACTIVE=${XIAOMO_HMBIRD_ACTIVE:-false}"
+            echo "HMBIRD_DETECTED=${XIAOMO_HMBIRD_DETECTED:-false}"
+          } > ./AnyKernel3/hmbird-status.txt
+          {
+            echo "UNICODE_STATUS=${XIAOMO_UNICODE_STATUS:-disabled}"
+            echo "UNICODE_SOURCE=${XIAOMO_UNICODE_SOURCE:-none}"
+            echo "FUSE_BPF_STATUS=${XIAOMO_FUSE_BPF_STATUS:-disabled}"
+            echo "FUSE_BPF_SOURCE=${XIAOMO_FUSE_BPF_SOURCE:-none}"
+            echo "FUSE_BPF_CHANGE_ID=I35350e18ea15b706051dd40a8bae363529a73426"
+            echo "FUSE_BPF_GERRIT=3943780"
+            echo "FUSE_BPF_UPSTREAM_STATUS=abandoned"
+            echo "TARGET=${{ github.event.inputs.FILE }}"
+            echo "KERNEL=$CKERNEL_VERSION"
+          } > ./AnyKernel3/storage-fix-status.txt
+          mkdir -p kernel_workspace/kernel_platform/out/Final-Image-Find/
+          image_path=""
+          if [ -d "./kernel_workspace/kernel_platform/common/out/" ]; then
+            image_path=$(find "./kernel_workspace/kernel_platform/common/out/" -name "Image" | head -n 1)
+            if [ -n "$image_path" ]; then
+              echo "✅ 使用 make 编译的统一路径，成功找到 Image 文件"
+            fi
+          fi
+          if [ -z "$image_path" ] && [ -d "./kernel_workspace/kernel_platform/out/" ]; then
+            image_path=$(find "./kernel_workspace/kernel_platform/out/" -name "Image" | head -n 1)
+            if [ -n "$image_path" ]; then
+              echo "✅ 使用官方脚本编译，成功找到 Image 文件"
+            fi
+          fi
+          if [ -z "$image_path" ]; then
+            echo "❌ 未找到 Image 文件，构建失败" >&2
+            exit 1
+          fi
+          if [ -f "$image_path" ]; then
+            echo "✅ Image file finally located at: $image_path"
+            cp "$image_path" ./AnyKernel3/Image
+            cp "$image_path" kernel_workspace/kernel_platform/out/Final-Image-Find/Image
+          fi
+
+      - name: Apply KPX and Replace Image
+        if: ${{ github.event.inputs.KPM != 'N/A' }}
+        run: |
+          KPM_DIR="${GITHUB_WORKSPACE}/kernel_workspace/SukiSU_patch/kpm"
+          # KPM_DIR="${GITHUB_WORKSPACE}/kernel_workspace/Action-Build/patches/kpm"
+          KPN_DIR="${GITHUB_WORKSPACE}/kernel_workspace/Action-Build/patches/kpn"
+          OUT_DIR="${GITHUB_WORKSPACE}/kernel_workspace/kernel_platform/out/Final-Image-Find"
+          cd "${OUT_DIR}"
+          if [ "${{ github.event.inputs.KPM }}" = "KPM" ]; then
+            cp "${KPM_DIR}/patch_linux" .
+            chmod +x patch_linux
+            ./patch_linux
+          else
+            cp "${KPN_DIR}/kptools-linux" "${KPN_DIR}/kpimg-linux" .
+            chmod +x ./kptools-linux
+            ./kptools-linux -p -i ./Image -k ./kpimg-linux -o ./oImage
+          fi
+          mv -f oImage Image
+          cp Image "${GITHUB_WORKSPACE}/AnyKernel3/Image"
+
+      - name: Add verified SUSFS module
+        run: |
+          set -e
+          OUT="ksu_module_susfs.zip"
+          curl -fL --retry 3 -o "$OUT" "https://github.com/LingLuo17/AnyKernel3/releases/download/v2.3.0-r15/ksu_module_susfs.zip"
+          echo "abcd6bf456ea8189298d9e496faa440201d90e4f0bd93b83c0527589001c9376  $OUT" | sha256sum -c -
+          unzip -t "$OUT" >/dev/null
+          cp "$OUT" ./AnyKernel3/
+
+      # Manager APK is distributed separately to keep the flashable AK3 small.
+      - name: Set zip Suffix
+        id: suffix
+        run: |
+          echo "value=${{ env.ZRAM_ALGO_U && format('_{0}', env.ZRAM_ALGO_U) || '' }}${{ github.event.inputs.KPM == 'KPM' && '_KPM' || github.event.inputs.KPM == 'KPN' && '_KPN' || '' }}${{ github.event.inputs.LSM_BBG == 'true' && '_BBG' || '' }}_ILH${{ env.XIAOMO_HMBIRD_ACTIVE == 'true' && '_HMBIRD' || '' }}${{ github.event.inputs.DROID_SPACES== 'true' && '_DS' || '' }}${{ github.event.inputs.RE_KERNEL == 'true' && '_REKER' || '' }}${{ github.event.inputs.LZ4_UPDATE == 'true' && '_LZ4UPD' || '' }}" >> $GITHUB_OUTPUT
+
+      - name: Upload AnyKernel3
+        uses: actions/upload-artifact@v7
+        with:
+          name: AnyKernel3_SukiSUUltra_${{ env.KSUVER }}_${{ steps.extract_info.outputs.value }}(${{ env.CKERNEL_VERSION }})${{ steps.suffix.outputs.value }}
+          path: ./AnyKernel3/*
+          retention-days: 7
+          compression-level: 9
+
+      - name: Extract and Process ZRAM Module
+        if: startsWith(github.event.inputs.ZRAM, '1/')
+        id: zram_find
+        run: |
+          set -e
+          ZRAM_ZIP="${GITHUB_WORKSPACE}/kernel_workspace/Action-Build/ZRAM.zip"
+
+          if [ ! -f "$ZRAM_ZIP" ]; then
+            echo "❌ 未找到 ZRAM.zip: $ZRAM_ZIP"
+            echo "upload=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          unzip "$ZRAM_ZIP" -d ZRAM-Module
+
+          CONFIG_PROP="ZRAM-Module/config.prop"
+          if [ -f "$CONFIG_PROP" ]; then
+            echo "修改 config.prop"
+            sed -i "s/^ZRAM_ALGO=.*/ZRAM_ALGO=${ZRAM_ALGO}/" "$CONFIG_PROP"
+            sed -i "s/^ZRAM_SIZE=.*/ZRAM_SIZE=${ZRAM_SIZE}/" "$CONFIG_PROP"
+            echo "ZRAM_ALGO=${ZRAM_ALGO}"
+            echo "ZRAM_SIZE=${ZRAM_SIZE}"
+          else
+            echo "❌ 未找到 config.prop"
+            echo "upload=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          target="./ZRAM-Module/zram/zram.ko"
+          echo "查找 zram.ko 模块文件..."
+          search_paths=(
+            "./kernel_workspace/kernel_platform/out"
+            "./kernel_workspace/device/qcom"
+          )
+          zram_path=""
+          for path in "${search_paths[@]}"; do
+            if [ -d "$path" ]; then
+              zram_path=$(find "$path" -type f -name "zram.ko" | head -n 1)
+              [ -n "$zram_path" ] && break
+            fi
+          done
+          if [ -z "$zram_path" ]; then
+            zram_path=$(find "./kernel_workspace" -type f -name "zram.ko" | head -n 1)
+          fi
+          if [ -n "$zram_path" ] && [ -f "$zram_path" ]; then
+            echo "✅ zram.ko file finally located at: $zram_path"
+            install -D "$zram_path" "$target"
+          else
+            echo "❌ 未找到 zram.ko 文件，可能是未支持的内核版本或构建失败"
+            echo "upload=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+      - name: Upload ZRAM Module
+        if: startsWith(github.event.inputs.ZRAM, '1/') && steps.zram_find.outputs.upload != 'false'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ZRAM-Module_${{ env.KERNEL_VERSION }}_${{ steps.extract_info.outputs.value }}
+          path: ZRAM-Module/*
+
+      - name: Check Cache Size Before Save
+        if: ${{ github.event.inputs.BUILD_NOCACHE == 'false' }}
+        id: cache_size_check
+        run: |
+          check_size() {
+            local CACHE_DIR="$1"
+            local CACHE_NAME="$2"
+            if [[ ! -d "$CACHE_DIR" ]]; then
+              echo "${CACHE_NAME}_save=false" >> "$GITHUB_OUTPUT"
+              return
+            fi
+            SIZE_MB=$(du -sm "$CACHE_DIR" | cut -f1)
+            echo "$CACHE_DIR 大小: ${SIZE_MB}MB"
+            if (( SIZE_MB >= 5 )); then
+              echo "${CACHE_NAME}_save=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "::warning title=Cache Warning::$CACHE_NAME 小于 5MB，跳过保存"
+              echo "${CACHE_NAME}_save=false" >> "$GITHUB_OUTPUT"
+            fi
+          }
+          check_size "${{ env.CCACHE_DIR }}" "ccache"
+          check_size "${{ github.workspace }}/kernel_workspace/.thinlto-cache" "thinlto"
+
+      - name: Save Ccache
+        if: ${{ github.event.inputs.BUILD_NOCACHE == 'false' && steps.cache_size_check.outputs.ccache_save == 'true' && steps.restore-ccache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ runner.os }}-${{ github.ref_name }}-${{ github.event.inputs.FILE }}-${{ env.BUILD_METHOD }}-${{ github.event.inputs.FAST_BUILD == 'true' && 'alpha' || 'beta' }}-17.0
+
+      - name: Save ThinLTO Cache
+        if: ${{ github.event.inputs.BUILD_NOCACHE == 'false' && github.event.inputs.FAST_BUILD == 'true' && steps.cache_size_check.outputs.thinlto_save == 'true' && steps.restore-thinlto.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ github.workspace }}/kernel_workspace/.thinlto-cache
+          key: thinlto-${{ runner.os }}-${{ github.ref_name }}-${{ github.event.inputs.FILE }}-17.0
+
+      - name: Post-build Disk Check
+        run: df -h arch/arm64/configs/gki_defconfig
+          grep -qF "bpf based lookup_revalidate here." fs/fuse/dir.c
+
+          # Provenance: Android kernel/common Gerrit 3943780
+          # Change-Id I35350e18ea15b706051dd40a8bae363529a73426.
+          # The change is not upstream/merged; keep this as a Pad Pro-scoped
+          # out-of-tree fix and require exact-context application.
+          patch -p1 --dry-run --forward --fuzz=0 < "$PATCH_FILE"
+          patch -p1 --forward --fuzz=0 < "$PATCH_FILE"
+
+          grep -qF 'int fuse_lookup_revalidate_initialize(' fs/fuse/backing.c
+          grep -qF 'int fuse_lookup_revalidate_backing(' fs/fuse/backing.c
+          grep -qF 'void *fuse_lookup_revalidate_finalize(' fs/fuse/backing.c
+          grep -qF 'fuse_lookup_revalidate_initialize,' fs/fuse/dir.c
+          grep -qF 'fuse_lookup_revalidate_backing,' fs/fuse/dir.c
+          grep -qF 'fuse_lookup_revalidate_finalize,' fs/fuse/dir.c
+          if grep -qF "bpf based lookup_revalidate here." fs/fuse/dir.c; then
+            echo "❌ old FUSE-BPF revalidation bypass branch is still present"
+            exit 1
+          fi
+          git diff --check -- fs/fuse/backing.c fs/fuse/dir.c fs/fuse/fuse_i.h
+
+          echo "XIAOMO_FUSE_BPF_STATUS=lookup_revalidate" >> "$GITHUB_ENV"
+          echo "XIAOMO_FUSE_BPF_DISPLAY=lookup revalidate" >> "$GITHUB_ENV"
+          echo "XIAOMO_FUSE_BPF_SOURCE=Android kernel/common Gerrit 3943780" >> "$GITHUB_ENV"
+          echo "✅ Pad Pro FUSE-BPF lookup revalidation patch applied with exact context"
 
           source "$REJ_CHECKER"
           check_rejects .
