@@ -1,5 +1,5 @@
-name: Pad Pro Zero Width Test
-run-name: pad-pro-zero-width-${{ github.run_id }}
+name: Pad Pro Storage/FUSE Test
+run-name: pad-pro-storage-fuse-${{ github.run_id }}
 on:
   workflow_dispatch:
   push:
@@ -27,7 +27,13 @@ jobs:
           grep -q 'spoof_uname 2' templates/anykernel.sh
           grep -q 'boot\$REF_SLOT' templates/anykernel.sh
           grep -q 'SUSFS_INSTALLED_CODE' templates/anykernel.sh
-          echo "AK3 installer syntax and alternate-slot spoof logic OK"
+          grep -q '__UNICODE__' templates/anykernel.sh
+          grep -q '__FUSE_BPF__' templates/anykernel.sh
+          if grep -q '零宽修复：已启用' templates/anykernel.sh; then
+            echo "❌ misleading hard-coded zero-width status is still present"
+            exit 1
+          fi
+          echo "AK3 installer syntax and build-status placeholders OK"
 
       - name: Validate zero-width runtime patch
         run: |
@@ -41,6 +47,88 @@ jobs:
             exit 1
           fi
           echo "✅ Pad Pro will use runtime utf8 normalization zero-width fix"
+
+      - name: Validate Pad Pro FUSE-BPF patch against exact OnePlus 6.1 source
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: python
+        run: |
+          from pathlib import Path
+          import json
+          import os
+          import subprocess
+          import tempfile
+          import urllib.parse
+          import urllib.request
+
+          owner_repo = 'OnePlusOSS/android_kernel_common_oneplus_sm8650'
+          ref = 'oneplus/sm8650_b_16.0.0_pad_pro'
+          paths = (
+              'fs/fuse/backing.c',
+              'fs/fuse/dir.c',
+              'fs/fuse/fuse_i.h',
+              'arch/arm64/configs/gki_defconfig',
+          )
+          headers = {
+              'Accept': 'application/vnd.github.raw+json',
+              'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+              'X-GitHub-Api-Version': '2022-11-28',
+          }
+
+          with tempfile.TemporaryDirectory() as temp:
+              root = Path(temp)
+              for path in paths:
+                  url = (
+                      'https://api.github.com/repos/' + owner_repo + '/contents/' +
+                      urllib.parse.quote(path, safe='/') + '?ref=' +
+                      urllib.parse.quote(ref, safe='')
+                  )
+                  req = urllib.request.Request(url, headers=headers)
+                  with urllib.request.urlopen(req, timeout=45) as response:
+                      data = response.read()
+                  target = root / path
+                  target.parent.mkdir(parents=True, exist_ok=True)
+                  target.write_bytes(data)
+
+              config = (root / 'arch/arm64/configs/gki_defconfig').read_text()
+              if 'CONFIG_FUSE_BPF=y' not in config.splitlines():
+                  raise SystemExit('Pad Pro source does not have CONFIG_FUSE_BPF=y')
+
+              patch = str(Path('patches/fuse_bpf_lookup_revalidate_6.1.patch').resolve())
+              subprocess.run(
+                  ['patch', '-p1', '--batch', '--forward', '--fuzz=0', '--dry-run', '-i', patch],
+                  cwd=root, check=True, timeout=30
+              )
+              subprocess.run(
+                  ['patch', '-p1', '--batch', '--forward', '--fuzz=0', '-i', patch],
+                  cwd=root, check=True, timeout=30
+              )
+
+              backing = (root / 'fs/fuse/backing.c').read_text()
+              directory = (root / 'fs/fuse/dir.c').read_text()
+              header = (root / 'fs/fuse/fuse_i.h').read_text()
+              checks = {
+                  'config_fuse_bpf': 'CONFIG_FUSE_BPF=y' in config,
+                  'initialize': 'fuse_lookup_revalidate_initialize' in backing and 'fuse_lookup_revalidate_initialize' in header,
+                  'backing': 'fuse_lookup_revalidate_backing' in backing and 'fuse_lookup_revalidate_backing' in header,
+                  'finalize': 'fuse_lookup_revalidate_finalize' in backing and 'fuse_lookup_revalidate_finalize' in header,
+                  'd_revalidate_calls_bpf': 'fuse_bpf_backing(dir, struct fuse_lookup_io' in directory,
+                  'old_skip_removed': 'bpf based lookup_revalidate here.' not in directory,
+              }
+              if not all(checks.values()):
+                  raise SystemExit('Pad Pro FUSE-BPF source checks failed: ' + json.dumps(checks))
+
+              Path('receipts').mkdir(exist_ok=True)
+              Path('receipts/fuse-bpf-source-checks.json').write_text(json.dumps({
+                  'source': owner_repo,
+                  'ref': ref,
+                  'gerrit_change': 3943780,
+                  'change_id': 'I35350e18ea15b706051dd40a8bae363529a73426',
+                  'upstream_status': 'abandoned',
+                  'checks': checks,
+                  'scope': 'Exact-source patch/application checks; real-device behavior still requires flash/runtime validation',
+              }, indent=2) + '\n')
+              print(json.dumps(checks), flush=True)
 
       - name: Validate UAPI patch and existing handlers
         shell: python
@@ -116,7 +204,7 @@ jobs:
           target = 'oneplus_pad_pro_b'
           workflow = urllib.parse.quote('Build Kernel OnePlus.yml', safe='')
           path = '/actions/workflows/' + workflow
-          inputs = dict(FILE=target, SUSFS_CI='Release', KPM='KPM', SUSFS_META='', DYNAMIC_REPO='Numbersf', BUILD_TIME='-1', KSU_META='main/builtin/xiaomo/70fa0e092a2c81060823f8ae526eac14fdda2930', LZ4_UPDATE='false', ZRAM='0/lz4kd/8589934592', SUFFIX='-1', RESUBLEVEL='', FAST_BUILD='true', LSM_BBG='false', NETFILTER='true', CCM='false', UNICODE_BYPASS='true', SCHED_HMBIRD='false', DROID_SPACES='false', RE_KERNEL='false', SUSFS_DEV='false', SPACE_NOCLEAN='true', BUILD_NOCACHE='false')
+          inputs = dict(FILE=target, SUSFS_CI='Release', KPM='KPM', SUSFS_META='', DYNAMIC_REPO='Numbersf', BUILD_TIME='-1', KSU_META='main/builtin/xiaomo/70fa0e092a2c81060823f8ae526eac14fdda2930', LZ4_UPDATE='false', ZRAM='0/lz4kd/8589934592', SUFFIX='-1', RESUBLEVEL='', FAST_BUILD='true', LSM_BBG='false', NETFILTER='true', CCM='false', UNICODE_BYPASS='true', FUSE_BPF_REVALIDATE='true', SCHED_HMBIRD='false', DROID_SPACES='false', RE_KERNEL='false', SUSFS_DEV='false', SPACE_NOCLEAN='true', BUILD_NOCACHE='false')
           Path('receipts').mkdir(exist_ok=True)
           before = {run['id'] for run in api(path+'/runs?per_page=30')['workflow_runs']}
           api(path+'/dispatches', {'ref':branch, 'inputs':inputs})
@@ -132,7 +220,7 @@ jobs:
                   Path('receipts/dispatch.json').write_text(json.dumps(receipt,indent=2)+'\n')
                   print(json.dumps(receipt),flush=True)
                   with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as summary:
-                      summary.write('Pad Pro Android 16 zero-width test build: '+run['html_url']+'\n')
+                      summary.write('Pad Pro Android 16 storage/FUSE test build: '+run['html_url']+'\n')
                   break
           else:
               raise SystemExit('Dispatch accepted but receipt not found; do not blindly re-dispatch.')
