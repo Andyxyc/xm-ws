@@ -192,6 +192,7 @@ jobs:
       - name: Maximize Build Space
         if: ${{ github.event.inputs.SPACE_NOCLEAN == 'false' }}
         env:
+          BUILD_MOUNT_PATH: ${{ github.workspace }}/kernel_workspace
           ROOT_RESERVE_MB: '8192'
           TEMP_RESERVE_MB: '2048'
           REMOVE_DOTNET: 'true'
@@ -204,7 +205,7 @@ jobs:
         run: |
           git config --global user.name "xiaomo"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          mkdir kernel_workspace && cd kernel_workspace
+          mkdir -p kernel_workspace && cd kernel_workspace
           git clone "https://github.com/${{ github.repository }}.git" -b SukiSU-Ultra Action-Build
 
       - name: Extract Manifest Info
@@ -1488,13 +1489,7 @@ jobs:
           unzip -t "$OUT" >/dev/null
           cp "$OUT" ./AnyKernel3/
 
-      - name: Add matching SukiSU manager
-        run: |
-          set -e
-          OUT="./AnyKernel3/SukiSU_v4.2.0_40959-release.apk"
-          curl -fL --retry 3 -o "$OUT" "https://github.com/LingLuo17/AnyKernel3/releases/download/v2.3.0-r15/SukiSU_v4.2.0_40959-release.apk"
-          echo "4f4d9dc8d5f7324a2afe89ec3638199e3d9cf1cd73e6a003189bf90cd424b9af  $OUT" | sha256sum -c -
-
+      # Manager APK is distributed separately to keep the flashable AK3 small.
       - name: Set zip Suffix
         id: suffix
         run: |
@@ -1506,6 +1501,7 @@ jobs:
           name: AnyKernel3_SukiSUUltra_${{ env.KSUVER }}_${{ steps.extract_info.outputs.value }}(${{ env.CKERNEL_VERSION }})${{ steps.suffix.outputs.value }}
           path: ./AnyKernel3/*
           retention-days: 7
+          compression-level: 9
 
       - name: Extract and Process ZRAM Module
         if: startsWith(github.event.inputs.ZRAM, '1/')
