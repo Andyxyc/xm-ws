@@ -31,6 +31,8 @@ jobs:
           grep -q '__FUSE_BPF__' templates/anykernel.sh
           grep -q 'Apply Pad Pro FUSE-BPF lookup revalidation' '.github/workflows/Build Kernel OnePlus.yml'
           grep -q 'storage-fix-status.txt' '.github/workflows/Build Kernel OnePlus.yml'
+          test "$(grep -c 'name: Post-build Disk Check' '.github/workflows/Build Kernel OnePlus.yml')" -eq 1
+          test "$(grep -c 'name: Apply Pad Pro FUSE-BPF lookup revalidation' '.github/workflows/Build Kernel OnePlus.yml')" -eq 1
           if grep -q '零宽修复：已启用' templates/anykernel.sh; then
             echo "❌ misleading hard-coded zero-width status is still present"
             exit 1
