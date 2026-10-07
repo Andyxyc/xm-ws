@@ -93,7 +93,7 @@ jobs:
           if len(devices) != len(set(devices)) or len(devices) != 57 or not set(pilots).issubset(devices):
               raise SystemExit('Unexpected device matrix; no dispatch performed.')
           values = {key: value.get('default', '') for key, value in fields.items()}
-          values.update(SUSFS_CI='Release', KPM='KPM', SUSFS_META='', BUILD_TIME='F',
+          values.update(SUSFS_CI='Release', KPM='KPM', SUSFS_META='', BUILD_TIME='-1',
                         KSU_META='main/builtin/xiaomo/70fa0e092a2c81060823f8ae526eac14fdda2930',
                         LZ4_UPDATE='false', ZRAM='0/lz4kd/8589934592', SUFFIX='-1',
                         FAST_BUILD='true', LSM_BBG='false', NETFILTER='true', CCM='false',
