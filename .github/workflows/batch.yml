@@ -13,7 +13,7 @@ permissions:
 
 concurrency:
   group: xm-device-batch
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   gate:
