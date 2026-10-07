@@ -161,7 +161,17 @@ else
 fi
 
 if [ -n "$FORCED_UNAME" ]; then
-  if printf '%s' "$FORCED_UNAME" | grep -Eq '^[A-Za-z0-9._:+-]+
+  if printf '%s' "$FORCED_UNAME" | grep -Eq '^[A-Za-z0-9._:+-]+$'; then
+    REF_UNAME="$FORCED_UNAME"
+    [ -n "$REF_BUILD" ] || REF_BUILD="$(uname -v 2>/dev/null)"
+    ui_print "指定 Uname：$REF_UNAME"
+  else
+    ui_print "⚠️ 指定 Uname 格式异常，忽略。"
+  fi
+fi
+
+# ------------------------------------------------------------
+# SUSFS 模块：相同/更高版本直接跳过；仅旧版/未安装时更新。
 # 模块更新失败不会把已经成功的内核刷入判定为失败。
 # ------------------------------------------------------------
 MODULE_PATH=""
