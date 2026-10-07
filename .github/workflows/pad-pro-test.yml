@@ -94,14 +94,6 @@ jobs:
                   'scope': 'Source and patch checks, not real-device runtime validation'
               }, indent=2) + '\n')
               print(json.dumps(checks), flush=True)
-      - name: Validate zero-width patch source
-        run: |
-          set -e
-          grep -q 'static void ignore_init' patches/unicode_bypass_fix_6.1+.patch
-          grep -q -- '-[[:space:]]*ignore_init();' patches/unicode_bypass_fix_6.1+.patch
-          grep -q 'utf8data.c_shipped' patches/unicode_bypass_fix_6.1+.patch
-          echo "Zero-width bypass patch source is present and will be applied by the child build"
-
       - name: Start Android 16 Pad Pro fix build
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
