@@ -94,7 +94,7 @@ jobs:
           target = 'oneplus_pad_pro_b'
           workflow = urllib.parse.quote('Build Kernel OnePlus.yml', safe='')
           path = '/actions/workflows/' + workflow
-          inputs = dict(FILE=target, SUSFS_CI='Release', KPM='KPM', SUSFS_META='', DYNAMIC_REPO='Numbersf', BUILD_TIME='-1', KSU_META='main/builtin/xiaomo/70fa0e092a2c81060823f8ae526eac14fdda2930', LZ4_UPDATE='false', ZRAM='0/lz4kd/8589934592', SUFFIX='-1', RESUBLEVEL='', FAST_BUILD='true', LSM_BBG='false', NETFILTER='true', CCM='false', UNICODE_BYPASS='true', SCHED_HMBIRD='true', DROID_SPACES='false', RE_KERNEL='false', SUSFS_DEV='false', SPACE_NOCLEAN='true', BUILD_NOCACHE='false')
+          inputs = dict(FILE=target, SUSFS_CI='Release', KPM='KPM', SUSFS_META='', DYNAMIC_REPO='Numbersf', BUILD_TIME='F', KSU_META='main/builtin/xiaomo/70fa0e092a2c81060823f8ae526eac14fdda2930', LZ4_UPDATE='false', ZRAM='0/lz4kd/8589934592', SUFFIX='-1', RESUBLEVEL='', FAST_BUILD='true', LSM_BBG='false', NETFILTER='true', CCM='false', UNICODE_BYPASS='true', SCHED_HMBIRD='true', DROID_SPACES='false', RE_KERNEL='false', SUSFS_DEV='false', SPACE_NOCLEAN='true', BUILD_NOCACHE='false')
           Path('receipts').mkdir(exist_ok=True)
           before = {run['id'] for run in api(path+'/runs?per_page=30')['workflow_runs']}
           api(path+'/dispatches', {'ref':branch, 'inputs':inputs})
