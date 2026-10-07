@@ -92,9 +92,9 @@ on:
         default: "Numbersf"
       BUILD_TIME:
         type: string
-        description: "自定义构建时间(输入F使用UTCT或-1关闭)//Custom build time (Enter F to use UTCT, or -1 to disable)"
+        description: "固定保留源码原始构建时间，不允许修改//Preserve upstream build time"
         required: false
-        default: "Wed Jul 15 11:18:49 UTC 2026"
+        default: "-1"
       KSU_META:
         type: string
         description: "管理器分支名(必填)/内置分支名(必填)/自定义版本标识(留空不修改)/回退分支提交哈希版本(留空不修改)//Manager Branch name (Required) / Builtin branch name (Required) / Custom version identifier (Leave blank to not modify) / Rollback branch commit hash version (Leave blank to not modify)"
@@ -112,11 +112,11 @@ on:
         default: "0/lz4kd/8589934592"
       SUFFIX:
         type: string
-        description: "自定义内核后缀(不输入使用RAND_STR或-1关闭)//Custom kernel suffix (Leave blank to use RAND_STR, or -1 to disable)"
+        description: "固定保留源码原始内核版本后缀，不允许修改//Preserve upstream kernel suffix"
         required: false
-        default: ""
+        default: "-1"
       RESUBLEVEL:
-        description: "自定义内核等级欺骗(SUBLEVEL)//Custom kernel SUBLEVEL spoofing"
+        description: "固定保留源码原始 SUBLEVEL，不允许修改//Preserve upstream SUBLEVEL"
         required: false
         default: ""
       FAST_BUILD:
@@ -525,14 +525,9 @@ jobs:
           echo "SUBLEVEL=$SUBLEVEL" >> $GITHUB_ENV
           ORIG_VERSION=$(awk '/^VERSION =/ {v=$3} /^PATCHLEVEL =/ {p=$3} /^SUBLEVEL =/ {s=$3} END {print v"."p"."s}' ./common/Makefile)
 
-          # 强制修改 SUBLEVEL (内核等级)
-          RESUBLEVEL="${{ github.event.inputs.RESUBLEVEL }}"
-          if [ -n "$RESUBLEVEL" ]; then
-            echo "修改 SUBLEVEL 为 $RESUBLEVEL"
-            sed -i "s/^SUBLEVEL[[:space:]]*=[[:space:]]*.*/SUBLEVEL = $RESUBLEVEL/" ./common/Makefile
-          else
-            echo "未指定 SUBLEVEL，保持默认"
-          fi
+          # 全局规则：禁止修改 SUBLEVEL，始终保留上游源码原值。
+          RESUBLEVEL=""
+          echo "SUBLEVEL locked: preserving upstream value"
 
           # 读取修改后的版本
           NEW_VERSION=$(awk '/^VERSION =/ {v=$3} /^PATCHLEVEL =/ {p=$3} /^SUBLEVEL =/ {s=$3} END {print v"."p"."s}' ./common/Makefile)
@@ -575,7 +570,7 @@ jobs:
 
       # 自定义内核后缀
       - name: Custom Kernel Suffix if set
-        if: ${{ github.event.inputs.SUFFIX != '' && github.event.inputs.SUFFIX != '-1' }}
+        if: ${{ false }}
         run: |
           cd kernel_workspace/kernel_platform
           SUFFIX="${{ github.event.inputs.SUFFIX }}"
@@ -614,7 +609,7 @@ jobs:
 
       # 伪官方格式的随机后缀（仅在 SUFFIX 未设置时生效）*
       - name: Custom Kernel Random Suffix if empty
-        if: ${{ github.event.inputs.SUFFIX == '' }}
+        if: ${{ false }}
         run: |
           cd kernel_workspace/kernel_platform
           FAST_BUILD="${{ github.event.inputs.FAST_BUILD }}"
@@ -1141,7 +1136,7 @@ jobs:
 
       # Custom kernel build time, without adding #1 SMP PREEMPT 自定义内核构建时间，不要加入#1 SMP PREEMPT
       - name: Custom BUILD_TIME
-        if: ${{ github.event.inputs.BUILD_TIME != '-1' }}
+        if: ${{ false }}
         shell: bash
         run: |
           INPUT_TIME="${{ github.event.inputs.BUILD_TIME }}"
