@@ -36,7 +36,7 @@ ui_print " OnePlus 专用 SukiSU Ultra 内核"
 ui_print " 目标配置：__TARGET__"
 ui_print " 内核：__KERNEL__"
 ui_print " SukiSU Ultra：40959"
-ui_print " SUSFS：v2.3.0"
+ui_print " SUSFS：2.3.0"
 ui_print " KPM：已启用"
 ui_print " 风驰：__HMBIRD__"
 ui_print " 零宽修复：已启用"
@@ -44,30 +44,33 @@ ui_print " 作者：心中都是莫"
 ui_print " Author: xiaomo"
 ui_print "========================================"
 
+# 只允许 OnePlus；具体机型由对应源码单独编译，包名会显示目标配置。
 BRAND="$(getprop ro.product.brand 2>/dev/null | tr '[:upper:]' '[:lower:]')"
 if [ -n "$BRAND" ]; then
- case "$BRAND" in
+  case "$BRAND" in
     *oneplus*) ;;
     *)
- ui_print "❌ 当前设备品牌不是 OnePlus，已停止。"
+      ui_print "❌ 当前设备不是 OnePlus，已停止。"
       exit 1
       ;;
   esac
 fi
 
+# 至少校验 Linux 内核主次版本，避免 5.10/5.15/6.1/6.6/6.12 跨代误刷。
 CURRENT_KERNEL="$(uname -r 2>/dev/null)"
 CURRENT_MM="$(printf '%s' "$CURRENT_KERNEL" | cut -d. -f1,2)"
 EXPECTED_MM="__KERNEL_MM__"
 if [ -n "$CURRENT_MM" ] && [ "$CURRENT_MM" != "$EXPECTED_MM" ]; then
- ui_print "❌ 内核大版本不匹配。"
- ui_print " 当前：$CURRENT_MM  需要：$EXPECTED_MM"
- ui_print " 已在写入 Boot 前停止。"
+  ui_print "❌ 内核大版本不匹配。"
+  ui_print " 当前：$CURRENT_MM  需要：$EXPECTED_MM"
+  ui_print " 已在写入 Boot 前停止。"
   exit 1
 fi
 
+# 不允许与 Magisk 混刷，减少启动异常变量。
 if [ -d /data/adb/magisk ] || [ -f /sbin/.magisk ]; then
- ui_print "❌ 检测到 Magisk 或残留。"
- ui_print " 为避免混用 Root 方案，本包不会继续写入 Boot。"
+  ui_print "❌ 检测到 Magisk 或残留。"
+  ui_print " 请先清理 Magisk 后再刷入。"
   exit 1
 fi
 
@@ -79,10 +82,11 @@ for f in "$AKHOME"/ksu_module_susfs*.zip "$AKHOME"/susfs*.zip; do
   fi
 done
 if [ -z "$MODULE_PATH" ]; then
- ui_print "❌ AK3 内未找到 SUSFS 模块，已停止。"
+  ui_print "❌ AK3 内未找到 SUSFS 模块，已停止。"
   exit 1
 fi
 
+# 必须在刷内核前确认 ksud 存在，否则无法满足“刷完自动装 SUSFS”。
 KSUD_PATH=""
 for p in /data/adb/ksud /data/adb/ksu/bin/ksud /data/adb/sukisu/bin/ksud; do
   if [ -x "$p" ]; then
@@ -94,30 +98,43 @@ if [ -z "$KSUD_PATH" ] && [ -d /data/adb ]; then
   KSUD_PATH="$(find /data/adb -type f -name ksud 2>/dev/null | head -n 1)"
 fi
 if [ -z "$KSUD_PATH" ] || [ ! -x "$KSUD_PATH" ]; then
- ui_print "❌ 未找到可执行 ksud。"
- ui_print " SUSFS 模块无法自动安装，因此在刷写前停止。"
+  ui_print "❌ 未找到可执行 ksud。"
+  ui_print " 无法保证刷完自动安装 SUSFS，因此在刷写前停止。"
   exit 1
 fi
 
 ui_print "正在刷写内核..."
-split_boot
+if ! split_boot; then
+  ui_print "❌ 拆分 Boot 失败。"
+  exit 1
+fi
 
 if [ -f "split_img/ramdisk.cpio" ]; then
-  unpack_ramdisk
-  write_boot
+  if ! unpack_ramdisk; then
+    ui_print "❌ 解包 ramdisk 失败。"
+    exit 1
+  fi
+  if ! write_boot; then
+    ui_print "❌ 写入 Boot 失败。"
+    exit 1
+  fi
 else
-  flash_boot
+  if ! flash_boot; then
+    ui_print "❌ 写入内核失败。"
+    exit 1
+  fi
 fi
 
 sync
 ui_print "✅ 内核刷写完成。"
 ui_print "正在自动安装 SUSFS 模块..."
+
 if "$KSUD_PATH" module install "$MODULE_PATH"; then
   sync
- ui_print "✅ SUSFS 模块安装完成。"
+  ui_print "✅ SUSFS 模块安装完成。"
 else
- ui_print "❌ SUSFS 模块自动安装失败。"
- ui_print " 内核已经写入，请不要把本次结果视为完整安装成功。"
+  ui_print "❌ SUSFS 模块自动安装失败。"
+  ui_print " 内核已写入，请不要把本次结果视为完整安装成功。"
   exit 1
 fi
 
