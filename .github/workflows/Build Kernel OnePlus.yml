@@ -42,6 +42,7 @@ on:
           - oneplus_13r_b
           - oneplus_ace3_pro_b
           - oneplus_ace5_b
+          - oneplus_pad_pro_v
           - oneplus_pad_pro_b
           - oneplus_pad2_b
           - oneplus_nord_ce5_b
@@ -680,6 +681,12 @@ jobs:
           echo "KSUVER=40959" >> "$GITHUB_ENV"
           echo "GIT_HASH=70fa0e09" >> "$GITHUB_ENV"
           echo "✅ SukiSU Ultra fixed at 40959 ($PIN)"
+
+      - name: Apply SukiSU compatibility fixes
+        run: |
+          set -e
+          cd kernel_workspace/kernel_platform
+          bash "$GITHUB_WORKSPACE/scripts/sukisu_compat/apply.sh" KernelSU
 
       - name: Apply Fake Patches
         if: ${{ github.event.inputs.SUSFS_META != '-1' }}
@@ -1386,9 +1393,14 @@ jobs:
           rm -rf ./AnyKernel3/.git
           cp "$GITHUB_WORKSPACE/templates/anykernel.sh" ./AnyKernel3/anykernel.sh
           KERNEL_MM=$(echo "$CKERNEL_VERSION" | awk -F. '{print $1"."$2}')
+          DEVICE_ID=""
+          case "${{ github.event.inputs.FILE }}" in
+            oneplus_pad_pro_v|oneplus_pad_pro_b) DEVICE_ID="OPD2404" ;;
+          esac
           sed -i "s|__TARGET__|${{ steps.extract_info.outputs.value }}|g" ./AnyKernel3/anykernel.sh
           sed -i "s|__KERNEL__|$CKERNEL_VERSION|g" ./AnyKernel3/anykernel.sh
           sed -i "s|__KERNEL_MM__|$KERNEL_MM|g" ./AnyKernel3/anykernel.sh
+          sed -i "s|__DEVICE_ID__|$DEVICE_ID|g" ./AnyKernel3/anykernel.sh
           sed -i "s|__HMBIRD__|${XIAOMO_HMBIRD_STATUS:-unsupported}|g" ./AnyKernel3/anykernel.sh
           mkdir -p kernel_workspace/kernel_platform/out/Final-Image-Find/
           image_path=""
