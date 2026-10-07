@@ -499,6 +499,18 @@ jobs:
 
           repo sync -c -j$(nproc) --no-clone-bundle --no-tags --force-sync
 
+          if [ "${{ github.event.inputs.SOURCE_PROFILE }}" = "PKX110_16_0_10_500_118" ]; then
+            [ "$FILE" = "oneplus_13t_b" ] || { echo "❌ PKX110 118 profile only supports oneplus_13t_b"; exit 33; }
+            COMMON_SHA=$(git -C kernel_platform/common rev-parse HEAD)
+            COMMON_VER=$(awk '/^VERSION =/ {v=$3} /^PATCHLEVEL =/ {p=$3} /^SUBLEVEL =/ {sl=$3} END {print v"."p"."sl}' kernel_platform/common/Makefile)
+            MSM_MSG=$(git -C kernel_platform/msm-kernel log -1 --format=%s 2>/dev/null || true)
+            MOD_MSG=$(git -C . log -1 --format=%s 2>/dev/null || true)
+            [ "$COMMON_VER" = "6.6.118" ] || { echo "❌ Expected common 6.6.118, got $COMMON_VER"; exit 34; }
+            echo "✅ PKX110 official-aligned common: $COMMON_SHA ($COMMON_VER)"
+            echo "✅ msm: $MSM_MSG"
+            echo "✅ modules: $MOD_MSG"
+          fi
+
           KERNEL_REPOS=""
           KERNEL_REPOS_PATH=$(find . -type f -name "build.config.msm.common" | head -n 1)
           if [[ -n "$KERNEL_REPOS_PATH" ]]; then
@@ -607,6 +619,11 @@ jobs:
               if target != "oneplus_13t_b" or os.environ["CURRENT_KERNEL"] != "6.6.89":
                   raise SystemExit(f"PKX110 pinned profile resolved incorrectly: {target} {os.environ['CURRENT_KERNEL']}")
               print("Pinned PKX110 profile OK: official vendor/modules 16.0.10.500 + common 6.6.89")
+              raise SystemExit(0)
+          if source_profile == "PKX110_16_0_10_500_118":
+              if target != "oneplus_13t_b" or os.environ["CURRENT_KERNEL"] != "6.6.118":
+                  raise SystemExit(f"PKX110 118 profile resolved incorrectly: {target} {os.environ['CURRENT_KERNEL']}")
+              print("PKX110 official-aligned profile OK: current official 13T source at 6.6.118")
               raise SystemExit(0)
           row = next((x for x in matrix["models"] if x["config"] == target), None)
           if row is None:
