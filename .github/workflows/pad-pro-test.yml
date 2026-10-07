@@ -1,4 +1,5 @@
 name: Pad test
+run-name: pad-pro-uapi5-${{ github.run_id }}
 on:
   workflow_dispatch:
   push:
@@ -13,14 +14,69 @@ concurrency:
 jobs:
   start:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 12
     steps:
-      - name: Start focused builds
+      - name: Checkout fixed source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Validate UAPI patch and existing handlers
+        shell: python
+        run: |
+          from pathlib import Path
+          import hashlib
+          import json
+          import re
+          import subprocess
+          import tempfile
+          import urllib.request
+          pin = '70fa0e092a2c81060823f8ae526eac14fdda2930'
+          base = 'https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/' + pin + '/'
+          paths = ('kernel/include/uapi/supercall.h', 'kernel/selinux/rules.c',
+                   'kernel/supercall/supercall.c', 'kernel/supercall/dispatch.c')
+          source_digests = {}
+          with tempfile.TemporaryDirectory() as temp:
+              root = Path(temp)
+              for path in paths:
+                  with urllib.request.urlopen(base + path, timeout=30) as response:
+                      data = response.read()
+                  target = root / path
+                  target.parent.mkdir(parents=True, exist_ok=True)
+                  target.write_bytes(data)
+                  source_digests[path] = hashlib.sha256(data).hexdigest()
+              for path in ('scripts/ksu_uapi_sync/builtin-uapi5.patch',
+                           'scripts/sukisu_compat/builtin-sync-fixes.patch'):
+                  patch = str(Path(path).resolve())
+                  for extra in (['--dry-run'], []):
+                      subprocess.run(['patch', '-p1', '--batch', '--forward', '--fuzz=0',
+                                      *extra, '-i', patch], cwd=root, check=True, timeout=30)
+              header = (root / paths[0]).read_text()
+              fd = (root / paths[2]).read_text()
+              dispatch = (root / paths[3]).read_text()
+              checks = {
+                  'uapi5': bool(re.search(r'KERNEL_SU_UAPI_VERSION,\s*5\)', header)),
+                  'bundled_flag': 'KSU_GET_INFO_FLAG_BUNDLED' in header,
+                  'services_constant': 'EVENT_SERVICES, 4' in header,
+                  'services_handler': 'case EVENT_SERVICES:' in dispatch,
+                  'services_start_skip': 'services_started = true;' in dispatch and 'services already started' in dispatch,
+                  'su_session_fd': 'int ksu_install_su_fd(void)' in fd and 'KSU_DRIVER_PERMISSION_SU_SESSION' in fd,
+                  'uapi_reported': 'cmd.uapi_version = KERNEL_SU_UAPI_VERSION;' in dispatch,
+                  'no_rejects': not any(root.rglob('*.rej')),
+              }
+              if not all(checks.values()):
+                  raise SystemExit('UAPI source checks failed: ' + json.dumps(checks))
+              Path('receipts').mkdir(exist_ok=True)
+              Path('receipts/uapi-source-checks.json').write_text(json.dumps({
+                  'pin': pin, 'checks': checks, 'sha256': source_digests,
+                  'scope': 'Source and patch checks, not real-device runtime validation'
+              }, indent=2) + '\n')
+              print(json.dumps(checks), flush=True)
+      - name: Start Android 16 Pad Pro fix build
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: python
         run: |
-          import base64, json, os, time, urllib.request, urllib.parse
+          import json, os, time, urllib.request, urllib.parse
           from pathlib import Path
           repo = os.environ['GITHUB_REPOSITORY']
           sha = os.environ['GITHUB_SHA']
@@ -28,48 +84,39 @@ jobs:
           headers = {'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28'}
           def api(path, data=None):
               req = urllib.request.Request(base+path, data=None if data is None else json.dumps(data).encode(), headers=headers, method='GET' if data is None else 'POST')
-              with urllib.request.urlopen(req, timeout=45) as r:
-                  body = r.read()
+              with urllib.request.urlopen(req, timeout=45) as response:
+                  body = response.read()
                   return json.loads(body) if body else None
-          # Stop the superseded batch so it cannot release another 52 builds during this focused test.
-          old_sha = 'a39b4d950adc7cbe367e1bd2692b94e9b645569f'
-          for run in api('/actions/runs?head_sha='+old_sha+'&per_page=100')['workflow_runs']:
-              if run['path'] in ('.github/workflows/batch.yml', '.github/workflows/Build Kernel OnePlus.yml') and run['status'] in ('queued','in_progress','waiting','pending','requested'):
-                  api('/actions/runs/'+str(run['id'])+'/cancel', {})
-                  print('Stopped superseded batch run', run['id'], flush=True)
+          branch = 'SukiSU-Ultra'
+          if api('/git/ref/heads/' + branch)['object']['sha'] != sha:
+              raise SystemExit('Branch moved; do not dispatch an unreviewed source revision.')
+          target = 'oneplus_pad_pro_b'
           workflow = urllib.parse.quote('Build Kernel OnePlus.yml', safe='')
-          path = '/actions/workflows/'+workflow
-          inputs = dict(SUSFS_CI='Release', KPM='KPM', SUSFS_META='', DYNAMIC_REPO='Numbersf', BUILD_TIME='-1', KSU_META='main/builtin/xiaomo/70fa0e092a2c81060823f8ae526eac14fdda2930', LZ4_UPDATE='false', ZRAM='0/lz4kd/8589934592', SUFFIX='-1', RESUBLEVEL='', FAST_BUILD='true', LSM_BBG='false', NETFILTER='true', CCM='false', UNICODE_BYPASS='true', SCHED_HMBIRD='true', DROID_SPACES='false', RE_KERNEL='false', SUSFS_DEV='false', SPACE_NOCLEAN='true', BUILD_NOCACHE='false')
-          receipts = []
+          path = '/actions/workflows/' + workflow
+          inputs = dict(FILE=target, SUSFS_CI='Release', KPM='KPM', SUSFS_META='', DYNAMIC_REPO='Numbersf', BUILD_TIME='-1', KSU_META='main/builtin/xiaomo/70fa0e092a2c81060823f8ae526eac14fdda2930', LZ4_UPDATE='false', ZRAM='0/lz4kd/8589934592', SUFFIX='-1', RESUBLEVEL='', FAST_BUILD='true', LSM_BBG='false', NETFILTER='true', CCM='false', UNICODE_BYPASS='true', SCHED_HMBIRD='true', DROID_SPACES='false', RE_KERNEL='false', SUSFS_DEV='false', SPACE_NOCLEAN='true', BUILD_NOCACHE='false')
           Path('receipts').mkdir(exist_ok=True)
-          for source in ('.github/workflows/Build Kernel OnePlus.yml', 'templates/anykernel.sh'):
-              data = api('/contents/'+urllib.parse.quote(source, safe='/')+'?ref='+sha)
-              destination = Path('receipts/sources') / source
-              destination.parent.mkdir(parents=True, exist_ok=True)
-              destination.write_bytes(base64.b64decode(data['content']))
-          for target in ('oneplus_pad_pro_v', 'oneplus_pad_pro_b'):
-              before = {r['id'] for r in api(path+'/runs?per_page=30')['workflow_runs']}
-              api(path+'/dispatches', {'ref':'SukiSU-Ultra','inputs':dict(inputs,FILE=target)})
-              for _ in range(36):
-                  time.sleep(5)
-                  matches = [r for r in api(path+'/runs?per_page=30')['workflow_runs'] if r['id'] not in before and r['head_sha']==sha and r['event']=='workflow_dispatch']
-                  if matches:
-                      if len(matches)!=1:
-                          raise SystemExit('Ambiguous dispatch receipt; do not submit more runs.')
-                      r=matches[0]
-                      receipt={'target':target,'run_id':r['id'],'url':r['html_url'],'head_sha':sha,'status':r['status']}
-                      receipts.append(receipt)
-                      Path('receipts/pad-pro.json').write_text(json.dumps(receipts,indent=2)+'\n')
-                      print(json.dumps(receipt),flush=True)
-                      with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as summary:
-                          summary.write('- '+target+': '+r['html_url']+'\n')
-                      break
-              else:
-                  raise SystemExit('Dispatch accepted but receipt not found; do not blindly re-dispatch.')
+          before = {run['id'] for run in api(path+'/runs?per_page=30')['workflow_runs']}
+          api(path+'/dispatches', {'ref':branch, 'inputs':inputs})
+          Path('receipts/dispatch.json').write_text(json.dumps({'accepted':True,'target':target,'head_sha':sha,'run_id':None},indent=2)+'\n')
+          for attempt in range(36):
+              time.sleep(5)
+              matches = [run for run in api(path+'/runs?per_page=30')['workflow_runs'] if run['id'] not in before and run['head_sha']==sha and run['event']=='workflow_dispatch']
+              if matches:
+                  if len(matches)!=1:
+                      raise SystemExit('Ambiguous dispatch receipt; no further dispatch attempted.')
+                  run = matches[0]
+                  receipt = {'target':target,'run_id':run['id'],'url':run['html_url'],'head_sha':sha,'status':run['status']}
+                  Path('receipts/dispatch.json').write_text(json.dumps(receipt,indent=2)+'\n')
+                  print(json.dumps(receipt),flush=True)
+                  with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as summary:
+                      summary.write('Pad Pro Android 16 UAPI fix build: '+run['html_url']+'\n')
+                  break
+          else:
+              raise SystemExit('Dispatch accepted but receipt not found; do not blindly re-dispatch.')
       - name: Save receipts
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: pad-pro-receipts-${{ github.run_id }}
+          name: pad-pro-uapi5-receipts-${{ github.run_id }}
           path: receipts/
           retention-days: 7
