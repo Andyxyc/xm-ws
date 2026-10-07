@@ -1,0 +1,183 @@
+{
+  "source": "https://1816791094.share.123pan.cn/123pan/kMhyVv-fWBHH",
+  "source_note": "Historical public package listing used as a minimum support/version baseline only. Files were not downloaded.",
+  "observed_folder": "SukiSU Ultra OnePlus[更新日期8.17] / 测试构建-KPM [更新日期8.17]",
+  "policy": "Current official OnePlus source may be newer. A build must not silently regress below a known historical baseline for mapped configs.",
+  "models": [
+    {
+      "model": "OnePlus 10 Pro",
+      "config": "oneplus_10_pro_b",
+      "android": "16.0",
+      "baseline_kernel": "5.10.236"
+    },
+    {
+      "model": "OnePlus ACE",
+      "config": "oneplus_ace_v",
+      "android": "15.0.0",
+      "baseline_kernel": "5.10.236"
+    },
+    {
+      "model": "OnePlus ACE2",
+      "config": "oneplus_ace2_b",
+      "android": "16.0.0",
+      "baseline_kernel": "5.10.236"
+    },
+    {
+      "model": "OnePlus ACE2V",
+      "config": "oneplus_ace_2v_b",
+      "android": "16.0.0",
+      "baseline_kernel": "5.10.236"
+    },
+    {
+      "model": "OnePlus ACE Pro",
+      "config": "oneplus_ace_pro_v",
+      "android": "15.0.0",
+      "baseline_kernel": "5.10.226"
+    },
+    {
+      "model": "OnePlus ACE 竞速",
+      "config": "oneplus_ace_race_v",
+      "android": "15.0.0",
+      "baseline_kernel": "5.10.236"
+    },
+    {
+      "model": "OnePlus 11",
+      "config": "oneplus_11_b",
+      "android": "16.0.0",
+      "baseline_kernel": "5.15.180"
+    },
+    {
+      "model": "OnePlus ACE2 Pro",
+      "config": "oneplus_ace2_pro_b",
+      "android": "16.0.0",
+      "baseline_kernel": "5.15.180"
+    },
+    {
+      "model": "OnePlus ACE3",
+      "config": "oneplus_ace3_b",
+      "android": "16.0.0",
+      "baseline_kernel": "5.15.180"
+    },
+    {
+      "model": "OnePlus 12",
+      "config": "oneplus_12_b",
+      "android": "16.0.0",
+      "baseline_kernel": "6.1.141"
+    },
+    {
+      "model": "OnePlus ACE3 Pro",
+      "config": "oneplus_ace3_pro_b",
+      "android": "16.0.0",
+      "baseline_kernel": "6.1.141"
+    },
+    {
+      "model": "OnePlus ACE3V",
+      "config": "oneplus_ace_3v_b",
+      "android": "16.0.0",
+      "baseline_kernel": "6.1.141"
+    },
+    {
+      "model": "OnePlus ACE5",
+      "config": "oneplus_ace5_b",
+      "android": "16.0.0",
+      "baseline_kernel": "6.1.141"
+    },
+    {
+      "model": "OnePlus ACE5 竞速",
+      "config": "oneplus_ace5_race_b",
+      "android": "16.0.0",
+      "baseline_kernel": "6.1.157"
+    },
+    {
+      "model": "OnePlus Pad 2 (6.1 line)",
+      "config": "oneplus_pad2_b",
+      "android": "16.0.0",
+      "baseline_kernel": "6.1.118"
+    },
+    {
+      "model": "OnePlus Pad Pro",
+      "config": "oneplus_pad_pro_b",
+      "android": "16.0.0",
+      "baseline_kernel": "6.1.118"
+    },
+    {
+      "model": "OnePlus 13",
+      "config": "oneplus_13_b",
+      "android": "16.0.0",
+      "baseline_kernel": "6.6.118"
+    },
+    {
+      "model": "OnePlus 13T",
+      "config": "oneplus_13t_b",
+      "android": "16.0.0",
+      "baseline_kernel": "6.6.118"
+    },
+    {
+      "model": "OnePlus ACE5 Pro",
+      "config": "oneplus_ace5_pro_b",
+      "android": "16.0.0",
+      "baseline_kernel": "6.6.118"
+    },
+    {
+      "model": "OnePlus ACE5 至尊",
+      "config": "oneplus_ace5_ultra_b",
+      "android": "16.0.0",
+      "baseline_kernel": "6.6.118"
+    },
+    {
+      "model": "OnePlus ACE6",
+      "config": "oneplus_ace_6",
+      "android": "16.0.0",
+      "baseline_kernel": "6.6.118"
+    },
+    {
+      "model": "OnePlus Nord 6",
+      "config": "oneplus_nord_6",
+      "android": "16.0.0",
+      "baseline_kernel": "6.6.89"
+    },
+    {
+      "model": "OnePlus Pad 2 (MT6991/6.6 line)",
+      "config": "oneplus_pad2_mt6991_b",
+      "android": "16.0.0",
+      "baseline_kernel": "6.6.89"
+    },
+    {
+      "model": "OnePlus Pad 2 Pro",
+      "config": "oneplus_pad_2_pro_b",
+      "android": "16.0.0",
+      "baseline_kernel": "6.6.118"
+    },
+    {
+      "model": "OnePlus Pad 3",
+      "config": "oneplus_pad_3_b",
+      "android": "16.0.0",
+      "baseline_kernel": "6.6.118"
+    },
+    {
+      "model": "OnePlus Turbo 6",
+      "config": "oneplus_turbo_6",
+      "android": "16.0.0",
+      "baseline_kernel": "6.6.89"
+    },
+    {
+      "model": "OnePlus 15",
+      "config": "oneplus_15",
+      "android": "16.0.0",
+      "baseline_kernel": "6.12.23"
+    },
+    {
+      "model": "OnePlus 15T",
+      "config": "oneplus_15t",
+      "android": "16.0.0",
+      "baseline_kernel": null,
+      "note": "Folder existed in historical share but contained no package."
+    },
+    {
+      "model": "OnePlus ACE6T",
+      "config": "oneplus_ace_6t",
+      "android": "16.0.0",
+      "baseline_kernel": "6.12.38"
+    }
+  ]
+}
