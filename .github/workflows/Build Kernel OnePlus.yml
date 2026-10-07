@@ -474,27 +474,27 @@ jobs:
           if [ "${{ github.event.inputs.SOURCE_PROFILE }}" = "PKX110_16_0_10_500" ]; then
             [ "$FILE" = "oneplus_13t_b" ] || { echo "❌ PKX110 profile only supports oneplus_13t_b"; exit 31; }
             python3 - <<'PY'
-            from pathlib import Path
-            import re
-            p = Path(".repo/manifests/oneplus_13t_b.xml")
-            text = p.read_text(encoding="utf-8")
-            pins = {
-                'name="android_kernel_common_oneplus_sm8750"': 'bce1edf8b052a7ecb945dfe145e2cd368fe2812b',
-                'name="android_kernel_oneplus_sm8750"': '745702d5ed2c0435f2b1d3bb78bc4f48422d4191',
-                'name="android_kernel_modules_and_devicetree_oneplus_sm8750"': '6a196f79f77acd55cf302e1696c038e4cad99254',
-            }
-            lines = text.splitlines()
-            for needle, sha in pins.items():
-                matched = [i for i, line in enumerate(lines) if needle in line]
-                if len(matched) != 1:
-                    raise SystemExit(f"manifest pin target mismatch: {needle}: {len(matched)}")
-                i = matched[0]
-                lines[i], n = re.subn(r'revision="[^"]+"', f'revision="{sha}"', lines[i], count=1)
-                if n != 1:
-                    raise SystemExit(f"revision replacement failed: {needle}")
-            p.write_text("\n".join(lines) + "\n", encoding="utf-8")
-            print("PKX110_16_0_10_500_PINNED")
-            PY
+          from pathlib import Path
+          import re
+          p = Path(".repo/manifests/oneplus_13t_b.xml")
+          text = p.read_text(encoding="utf-8")
+          pins = {
+              'name="android_kernel_common_oneplus_sm8750"': 'bce1edf8b052a7ecb945dfe145e2cd368fe2812b',
+              'name="android_kernel_oneplus_sm8750"': '745702d5ed2c0435f2b1d3bb78bc4f48422d4191',
+              'name="android_kernel_modules_and_devicetree_oneplus_sm8750"': '6a196f79f77acd55cf302e1696c038e4cad99254',
+          }
+          lines = text.splitlines()
+          for needle, sha in pins.items():
+              matched = [i for i, line in enumerate(lines) if needle in line]
+              if len(matched) != 1:
+                  raise SystemExit(f"manifest pin target mismatch: {needle}: {len(matched)}")
+              i = matched[0]
+              lines[i], n = re.subn(r'revision="[^"]+"', f'revision="{sha}"', lines[i], count=1)
+              if n != 1:
+                  raise SystemExit(f"revision replacement failed: {needle}")
+          p.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          print("PKX110_16_0_10_500_PINNED")
+          PY
           fi
 
           repo sync -c -j$(nproc) --no-clone-bundle --no-tags --force-sync
