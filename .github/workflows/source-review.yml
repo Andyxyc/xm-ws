@@ -1,0 +1,25 @@
+name: Source review
+on:
+  push:
+    branches: [op13t-6.6.89-20261007]
+    paths: [.github/workflows/source-review.yml]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Export reviewed workflow inputs
+        run: |
+          set -euo pipefail
+          tar -czf source-review.tar.gz .github/workflows templates scripts LICENSE NOTICE.md reference
+          sha256sum source-review.tar.gz
+      - uses: actions/upload-artifact@v7
+        with:
+          name: op13t-source-review
+          path: source-review.tar.gz
+          retention-days: 7
