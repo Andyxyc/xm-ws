@@ -1,4 +1,4 @@
-name: Build All OnePlus Kernels
+name: Build
 on:
   workflow_dispatch:
     inputs:
@@ -67,22 +67,18 @@ on:
           - oneplus_ace6_ultra
       SUSFS_CI:
         type: choice
-        description: "SUSFS模块下载调用方向//SUSFS module branch"
+        description: "SUSFS module source"
         required: true
-        default: N/A
+        default: Release
         options:
-          - CI
           - Release
-          - N/A
       KPM:
         type: choice
-        description: "内核模块实现方式//Kernel module implementation method"
+        description: "Kernel patch module"
         required: true
         default: KPM
         options:
           - KPM
-          - KPN
-          - N/A
       SUSFS_META:
         type: string
         description: "回退SUSFS(输入哈希或次数或-1关闭)//Rollback SUSFS (Enter commit hash, count, or -1 to disable)"
@@ -102,7 +98,7 @@ on:
         type: string
         description: "管理器分支名(必填)/内置分支名(必填)/自定义版本标识(留空不修改)/回退分支提交哈希版本(留空不修改)//Manager Branch name (Required) / Builtin branch name (Required) / Custom version identifier (Leave blank to not modify) / Rollback branch commit hash version (Leave blank to not modify)"
         required: false
-        default: "main/builtin/Numbersf/"
+        default: "main/builtin/xiaomo/70fa0e092a2c81060823f8ae526eac14fdda2930"
       LZ4_UPDATE:
         type: boolean
         description: "是否升级LZ4到上游最新？//Upgrade LZ4 to the latest upstream?"
@@ -139,19 +135,19 @@ on:
         default: true
       CCM:
         type: boolean
-        description: "是否启用网络拥塞控制与管理机制(BBRv1+BBRv3+ECN)？//Enable network congestion control and management mechanism (BBRv1+BBRv3+ECN)?"
+        description: "Optional congestion-control extensions"
         required: true
-        default: true
+        default: false
       UNICODE_BYPASS:
         type: boolean
-        description: "是否添加Unicode不可见字码点绕过读取漏洞修复？//Add patch for Unicode invisible code point read bypass vulnerability?"
+        description: "Unicode invisible/zero-width bypass fix"
         required: true
-        default: false
+        default: true
       SCHED_HMBIRD:
         type: boolean
-        description: "是否添加风驰驱动1.0？//Add Fengchi (HMBIRD) Driver 1.0?"
+        description: "Auto preserve/apply supported HMBIRD"
         required: true
-        default: false
+        default: true
       DROID_SPACES:
         type: boolean
         description: "是否添加轻量级Linux容器支持(DroidSpaces)？//Add lightweight Linux container support (DroidSpaces)?"
@@ -180,7 +176,7 @@ on:
 
 jobs:
   build:
-    name: ${{ github.event.inputs.FAST_BUILD == 'true' && ' [FAST]' || '' }}${{ contains(github.event.inputs.FILE, '_aosp') && ' [AOSP]' || '' }}${{ github.event.inputs.KPM == 'KPM' && ' [KPM]' || github.event.inputs.KPM == 'KPN' && ' [KPN]' || '' }}${{ github.event.inputs.LSM_BBG == 'true' && ' [BBG]' || '' }}${{ github.event.inputs.SCHED_HMBIRD == 'true' && ' [HMBIRD]' || '' }}${{ github.event.inputs.DROID_SPACES == 'true' && ' [DS]' || '' }}${{ startsWith(github.event.inputs.ZRAM, '1/') && ' [ZRAM]' || '' }}${{ github.event.inputs.RE_KERNEL == 'true' && ' [REKER]' || '' }}${{ github.event.inputs.LZ4_UPDATE == 'true' && ' [LZ4UPD]' || '' }}For ${{ github.event.inputs.FILE }} ${{ github.event.inputs.SUFFIX }}
+    name: build
     runs-on: ubuntu-latest
     env:
       CCACHE_COMPILERCHECK: "none"
@@ -205,10 +201,10 @@ jobs:
 
       - name: Configure Git
         run: |
-          git config --global user.name "Numbersf"
-          git config --global user.email "263623064@qq.com"
+          git config --global user.name "xiaomo"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
           mkdir kernel_workspace && cd kernel_workspace
-          git clone https://github.com/Numbersf/Action-Build.git -b SukiSU-Ultra
+          git clone "https://github.com/${{ github.repository }}.git" -b SukiSU-Ultra Action-Build
 
       - name: Extract Manifest Info
         id: extract_info
@@ -654,84 +650,36 @@ jobs:
             chmod +x "$f"
           done
 
-      - name: Add SukiSU Ultra
+      - name: Add SukiSU Ultra 40959
         run: |
+          set -e
           cd kernel_workspace/kernel_platform
-          KSU_META="${{ github.event.inputs.KSU_META }}"
-
-          # 必须包含两个分隔符（至少四个字段）
-          if [[ "$(grep -o '/' <<< "$KSU_META" | wc -l)" -lt 3 ]]; then
-            echo "错误: KSU_META 参数缺少必要的分隔符 '/'，格式应为: 管理器分支名/内置分支名/自定义标识(可省略)/提交hash(可省略)"
-            exit 10
-          fi
-
-          # 解析字段：分支 / 自定义标识 / 手动 hash
-          IFS='/' read -r KSU_MANAGER_BRANCH KSU_BUILTIN_BRANCH KSU_CUSTOM_TAG MANUAL_HASH <<< "$KSU_META"
-          echo "KSU_MANAGER_BRANCH=$KSU_MANAGER_BRANCH" >> $GITHUB_ENV
-          echo "KSU_BUILTIN_BRANCH=$KSU_BUILTIN_BRANCH" >> $GITHUB_ENV
-          [[ -n "$KSU_CUSTOM_TAG" ]] && echo "自定义版本标识: $KSU_CUSTOM_TAG" || echo "自定义版本标识: 未启用"
-          [[ -n "$MANUAL_HASH" ]] && echo "手动指定 hash: $MANUAL_HASH" || echo "手动指定 hash: 未启用"
-
-          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/${KSU_MANAGER_BRANCH}/kernel/setup.sh" | bash -s "$KSU_BUILTIN_BRANCH"
+          PIN="70fa0e092a2c81060823f8ae526eac14fdda2930"
+          curl -fLSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/$PIN/kernel/setup.sh" | bash -s builtin
           cd ./KernelSU
+          git fetch origin "$PIN" --depth=1
+          git checkout --detach "$PIN"
 
-          # 如果指定了手动 hash，就切换到该提交
-          if [[ -n "$MANUAL_HASH" ]]; then
-            git fetch origin "$KSU_BUILTIN_BRANCH" --depth=50
-            git checkout "$MANUAL_HASH"
-            SHORT_HASH=${MANUAL_HASH:0:8}
+          ACTUAL=$(git rev-parse HEAD)
+          if [ "$ACTUAL" != "$PIN" ]; then
+            echo "❌ SukiSU commit mismatch: $ACTUAL"
+            exit 13
           fi
 
-          KSU_VERSION_TAG=$(curl -fsSL https://api.github.com/repos/SukiSU-Ultra/SukiSU-Ultra/releases/latest \
-            | grep '"tag_name":' | sed -E 's/.*"v?([^"]+)".*/\1/')
-          if [[ -z "$KSU_VERSION_TAG" || "$(printf '%s\n' "$KSU_VERSION_TAG" "3.1.7" | sort -V | head -n1)" != "3.1.7" ]]; then
-            KSU_VERSION_TAG="3.1.7"
-          fi
-          echo "KSU_VERSION_TAG=$KSU_VERSION_TAG" >> $GITHUB_ENV
-
-          GIT_HASH=$(git rev-parse --short HEAD)
-          echo "GIT_HASH=$GIT_HASH"
-
-          # 组装版本号
-          if [[ -n "$MANUAL_HASH" ]]; then
-            USE_HASH="$SHORT_HASH"
-          else
-            USE_HASH="$GIT_HASH"
-          fi
-          if [[ -z "$KSU_CUSTOM_TAG" ]]; then
-            VERSION_FULL="v$KSU_VERSION_TAG-$USE_HASH@$KSU_BUILTIN_BRANCH"
-          else
-            VERSION_FULL="v$KSU_VERSION_TAG-$KSU_CUSTOM_TAG@$KSU_BUILTIN_BRANCH[$USE_HASH]"
-          fi
-
-          ESC_VERSION_FULL=$(printf '%s' "$VERSION_FULL" | sed 's/[&|\\/]/\\&/g')
-          ESC_KSU_VERSION_TAG=$(printf '%s' "$KSU_VERSION_TAG" | sed 's/[&|\\/]/\\&/g')
-
+          # 固定版本，避免远端 main 后续提交导致 40959 漂移。
+          sed -i 's|^KSU_VERSION     := .*|KSU_VERSION     := 40959|' kernel/Makefile
+          sed -i 's|^VERSION_TAG     := .*|VERSION_TAG     := 4.2.0|' kernel/Makefile
           if grep -q '^KSU_VERSION_FULL := ' kernel/Makefile; then
-            sed -i "s|^KSU_VERSION_FULL := .*|KSU_VERSION_FULL := $ESC_VERSION_FULL|" kernel/Makefile
-          else
-            awk -v full="$VERSION_FULL" '
-              /^REPO_OWNER :=/ && !done {
-                print
-                print ""
-                print "KSU_VERSION_FULL := " full
-                done=1
-                next
-              }
-              { print }
-            ' kernel/Makefile > kernel/Makefile.tmp && mv kernel/Makefile.tmp kernel/Makefile
+            sed -i 's|^KSU_VERSION_FULL := .*|KSU_VERSION_FULL := v4.2.0-xiaomo@builtin[70fa0e09]|' kernel/Makefile
           fi
+          grep -q '^KSU_VERSION     := 40959$' kernel/Makefile
 
-          if grep -q '^KSU_VERSION_API := ' kernel/Makefile; then
-            sed -i "s|^KSU_VERSION_API := .*|KSU_VERSION_API := $ESC_KSU_VERSION_TAG|" kernel/Makefile
-          fi
-
-          KSU_VERSION=$(expr $(git rev-list --count "$KSU_MANAGER_BRANCH" 2>/dev/null || echo 13000) + 37185)
-          echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
-
-          echo "::group::最终 Makefile 中版本信息及部分调试结果预览"
-          grep -nE '^(REPO_OWNER|REPO_NAME|REPO_BRANCH|KSU_VERSION_API|KSU_VERSION_FULL|VERSION_TAG|GIT_BIN|CURL_BIN)' kernel/Makefile
-          echo "::endgroup::"
+          echo "KSU_MANAGER_BRANCH=main" >> "$GITHUB_ENV"
+          echo "KSU_BUILTIN_BRANCH=builtin" >> "$GITHUB_ENV"
+          echo "KSU_VERSION_TAG=4.2.0" >> "$GITHUB_ENV"
+          echo "KSUVER=40959" >> "$GITHUB_ENV"
+          echo "GIT_HASH=70fa0e09" >> "$GITHUB_ENV"
+          echo "✅ SukiSU Ultra fixed at 40959 ($PIN)"
 
       - name: Apply Fake Patches
         if: ${{ github.event.inputs.SUSFS_META != '-1' }}
@@ -742,22 +690,24 @@ jobs:
         env:
           FILE: ${{ github.event.inputs.FILE }}
         run: |
+          set -e
           cd kernel_workspace
-          if [ "${{ github.event.inputs.SUSFS_META }}" != "-1" ]; then
-            SUSFS_META="${{ github.event.inputs.SUSFS_META }}"
-            git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}${{ github.event.inputs.SUSFS_DEV == 'true' && '-dev' || '' }}
-            cd susfs4ksu
-            if [ -n "$SUSFS_META" ]; then
-              if [[ "$SUSFS_META" =~ ^[0-9]+$ ]]; then
-                git checkout HEAD~$SUSFS_META
-              else
-                git checkout "$SUSFS_META"
-              fi
-            else
-              echo "SUSFS_META 为空，使用最新上游 SUSFS"
-            fi
-            cd ..
+          if [ "${{ github.event.inputs.SUSFS_META }}" = "-1" ]; then
+            echo "❌ SUSFS is mandatory in this build."
+            exit 14
           fi
+
+          git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
+          cd susfs4ksu
+          SUSFS_VERSION=$(awk -F= '$1=="version" {print $2}' ksu_module_susfs/module.prop | head -n1)
+          case "$SUSFS_VERSION" in
+            2.3.0*) ;;
+            *) echo "❌ Unexpected SUSFS version: $SUSFS_VERSION (expected 2.3.0)"; exit 15 ;;
+          esac
+          echo "SUSFS_COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          echo "SUSFS_VERSION=$SUSFS_VERSION" >> "$GITHUB_ENV"
+          cd ..
+
           if [ "${{ github.event.inputs.RE_KERNEL }}" = "true" ]; then
             git clone https://github.com/Sakion-Team/Re-Kernel.git
           fi
@@ -806,7 +756,7 @@ jobs:
 
       # OGKI转换GKI，无需修改 dtbo 开机
       - name: Apply Convert HMBIRD_OGKI to HMBIRD_GKI
-        if: ${{ (fromJSON(env.VERSIONLEVEL) > 6 || (fromJSON(env.VERSIONLEVEL) == 6 && fromJSON(env.PATCHLEVEL) >= 6)) && github.event.inputs.SCHED_HMBIRD == 'false' }}
+        if: ${{ (fromJSON(env.VERSIONLEVEL) > 6 || (fromJSON(env.VERSIONLEVEL) == 6 && fromJSON(env.PATCHLEVEL) >= 6)) && env.XIAOMO_HMBIRD_ACTIVE != 'true' }}
         run: |
           PATCH_DIR="${GITHUB_WORKSPACE}/kernel_workspace/Action-Build/patches"
           cd kernel_workspace/kernel_platform/common
@@ -844,9 +794,9 @@ jobs:
           PATCH_DIR="${GITHUB_WORKSPACE}/kernel_workspace/Action-Build/patches"
           cd kernel_workspace/kernel_platform/common
           if [ "$VERSIONLEVEL" -lt 6 ]; then
-            patch -p1 --forward < "${PATCH_DIR}/unicode_bypass_fix_6.1-.patch" || true
+            patch -p1 --forward < "${PATCH_DIR}/unicode_bypass_fix_6.1-.patch"
           else
-            patch -p1 --forward < "${PATCH_DIR}/unicode_bypass_fix_6.1+.patch" || true
+            patch -p1 --forward < "${PATCH_DIR}/unicode_bypass_fix_6.1+.patch"
           fi
           source $REJ_CHECKER
           check_rejects .
@@ -965,25 +915,34 @@ jobs:
         run: |
           cd kernel_workspace/kernel_platform/common
           CLEAN_FILE="${FILE//_bak/}"
+          echo "XIAOMO_HMBIRD_ACTIVE=false" >> "$GITHUB_ENV"
+          echo "XIAOMO_HMBIRD_STATUS=unsupported" >> "$GITHUB_ENV"
+
           for p in ./kernel/sched/hmbird* ./vendor/oplus/kernel/cpu/sched_ext/hmbird*; do
             [ -d "$p" ] && {
-              echo "源码中风驰代码已经存在，启用二次回退"
+              echo "✅ 源码原生存在风驰，原样保留"
+              echo "XIAOMO_HMBIRD_ACTIVE=true" >> "$GITHUB_ENV"
+              echo "XIAOMO_HMBIRD_STATUS=native" >> "$GITHUB_ENV"
               exit 0
             }
           done
-          git clone https://github.com/Numbersf/SCHED_PATCH.git -b $CPU || { echo "❌ CPU 分支不存在，风驰内核暂未支持你的机型，请关闭后重试"; exit 11; }
-          echo "正在拉取风驰补丁"
-          cp ./SCHED_PATCH/fengchi_${CLEAN_FILE}.patch ./
-          if [[ -f "fengchi_${CLEAN_FILE}.patch" ]]; then
-            echo "正在打风驰补丁"
+
+          if ! git clone https://github.com/Numbersf/SCHED_PATCH.git -b "$CPU"; then
+            echo "ℹ️ 没有该 CPU 的风驰补丁，安全跳过"
+            exit 0
+          fi
+
+          if [ -f "./SCHED_PATCH/fengchi_${CLEAN_FILE}.patch" ]; then
+            cp "./SCHED_PATCH/fengchi_${CLEAN_FILE}.patch" ./
             dos2unix "fengchi_${CLEAN_FILE}.patch"
             patch -p1 -F 3 < "fengchi_${CLEAN_FILE}.patch"
-            echo "fengchi_patch完成"
-            source $REJ_CHECKER
+            source "$REJ_CHECKER"
             check_rejects .
+            echo "XIAOMO_HMBIRD_ACTIVE=true" >> "$GITHUB_ENV"
+            echo "XIAOMO_HMBIRD_STATUS=patched" >> "$GITHUB_ENV"
+            echo "✅ 风驰补丁已成功应用"
           else
-            echo "❌ 未匹配到补丁，风驰内核暂未支持你的机型，请关闭后重试"
-            exit 12
+            echo "ℹ️ 当前机型无匹配风驰补丁，安全跳过"
           fi
 
       - name: Apply LSM_BBG
@@ -1425,6 +1384,12 @@ jobs:
         run: |
           git clone https://github.com/Numbersf/AnyKernel3 --depth=1
           rm -rf ./AnyKernel3/.git
+          cp "$GITHUB_WORKSPACE/templates/anykernel.sh" ./AnyKernel3/anykernel.sh
+          KERNEL_MM=$(echo "$CKERNEL_VERSION" | awk -F. '{print $1"."$2}')
+          sed -i "s|__TARGET__|${{ steps.extract_info.outputs.value }}|g" ./AnyKernel3/anykernel.sh
+          sed -i "s|__KERNEL__|$CKERNEL_VERSION|g" ./AnyKernel3/anykernel.sh
+          sed -i "s|__KERNEL_MM__|$KERNEL_MM|g" ./AnyKernel3/anykernel.sh
+          sed -i "s|__HMBIRD__|${XIAOMO_HMBIRD_STATUS:-unsupported}|g" ./AnyKernel3/anykernel.sh
           mkdir -p kernel_workspace/kernel_platform/out/Final-Image-Find/
           image_path=""
           if [ -d "./kernel_workspace/kernel_platform/common/out/" ]; then
@@ -1469,69 +1434,33 @@ jobs:
           mv -f oImage Image
           cp Image "${GITHUB_WORKSPACE}/AnyKernel3/Image"
 
-      - name: Download Latest SUSFS Module from CI
-        if: ${{ github.event.inputs.SUSFS_CI == 'CI' && github.event.inputs.SUSFS_META != '-1' }}
-        continue-on-error: true
+      - name: Add verified SUSFS module
         run: |
-          LATEST_RUN_ID=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs?status=success&event=push" | \
-            jq -r '.workflow_runs[] | select(.head_branch == "v1.5.2+") | .id' | head -n 1)
-          if [ -z "$LATEST_RUN_ID" ]; then
-            echo "No successful run found for branch v1.5.2+"
-          else
-            ARTIFACT_URL=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs/$LATEST_RUN_ID/artifacts" | jq -r '.artifacts[0].archive_download_url')
-            if [ -n "$ARTIFACT_URL" ]; then
-              curl -L -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -o ksu_module_susfs_1.5.2+_CI.zip "$ARTIFACT_URL"
-              cp ksu_module_susfs_1.5.2+_CI.zip ./AnyKernel3/
-            else
-              echo "Failed to fetch artifact URL"
-            fi
-          fi
+          set -e
+          OUT="ksu_module_susfs.zip"
+          curl -fL --retry 3 -o "$OUT" "https://github.com/LingLuo17/AnyKernel3/releases/download/v2.3.0-r15/ksu_module_susfs.zip"
+          echo "abcd6bf456ea8189298d9e496faa440201d90e4f0bd93b83c0527589001c9376  $OUT" | sha256sum -c -
+          unzip -t "$OUT" >/dev/null
+          cp "$OUT" ./AnyKernel3/
 
-      - name: Download Latest SUSFS Module from Release
-        if: ${{ github.event.inputs.SUSFS_CI == 'Release' && github.event.inputs.SUSFS_META != '-1' }}
-        continue-on-error: true
+      - name: Add matching SukiSU manager
         run: |
-          wget -O ksu_module_susfs_1.5.2+_Release.zip https://github.com/sidex15/ksu_module_susfs/releases/latest/download/ksu_module_susfs_1.5.2+.zip
-          cp ksu_module_susfs_1.5.2+_Release.zip ./AnyKernel3/
-
-      - name: Download Latest SukiSU-Ultra APK from CI
-        continue-on-error: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          MANAGER_ARTIFACT=Manager
-
-          echo "Using branch: $KSU_MANAGER_BRANCH"
-          echo "Downloading artifact: $MANAGER_ARTIFACT"
-
-          run_id=$(gh api "repos/SukiSU-Ultra/SukiSU-Ultra/actions/workflows/build-manager.yml/runs?branch=$KSU_MANAGER_BRANCH&status=success&event=push&per_page=1" --jq '.workflow_runs[0].id' || echo "")
-
-          if [[ -z "$run_id" ]]; then
-            echo "No successful workflow run found on branch $KSU_MANAGER_BRANCH. Skipping download."
-            exit 0
-          fi
-          artifact_url=$(gh api "repos/SukiSU-Ultra/SukiSU-Ultra/actions/runs/$run_id/artifacts" | jq -r ".artifacts[] | select(.name == \"$MANAGER_ARTIFACT\") | .archive_download_url" | head -n1)
-
-          if [[ -z "$artifact_url" ]]; then
-            echo "No artifact '$MANAGER_ARTIFACT' found in run $run_id. Skipping download."
-            exit 0
-          fi
-          echo "Downloading from: $artifact_url"
-          curl -fL -H "Authorization: token $GITHUB_TOKEN" -o "${MANAGER_ARTIFACT}.zip" "$artifact_url"
-          unzip -j "${MANAGER_ARTIFACT}.zip" "*.apk" -d ./AnyKernel3/
+          set -e
+          OUT="./AnyKernel3/SukiSU_v4.2.0_40959-release.apk"
+          curl -fL --retry 3 -o "$OUT" "https://github.com/LingLuo17/AnyKernel3/releases/download/v2.3.0-r15/SukiSU_v4.2.0_40959-release.apk"
+          echo "4f4d9dc8d5f7324a2afe89ec3638199e3d9cf1cd73e6a003189bf90cd424b9af  $OUT" | sha256sum -c -
 
       - name: Set zip Suffix
         id: suffix
         run: |
-          echo "value=${{ env.ZRAM_ALGO_U && format('_{0}', env.ZRAM_ALGO_U) || '' }}${{ github.event.inputs.KPM == 'KPM' && '_KPM' || github.event.inputs.KPM == 'KPN' && '_KPN' || '' }}${{ github.event.inputs.LSM_BBG == 'true' && '_BBG' || '' }}_ILH${{ github.event.inputs.SCHED_HMBIRD== 'true' && '_HMBIRD' || '' }}${{ github.event.inputs.DROID_SPACES== 'true' && '_DS' || '' }}${{ github.event.inputs.RE_KERNEL == 'true' && '_REKER' || '' }}${{ github.event.inputs.LZ4_UPDATE == 'true' && '_LZ4UPD' || '' }}" >> $GITHUB_OUTPUT
+          echo "value=${{ env.ZRAM_ALGO_U && format('_{0}', env.ZRAM_ALGO_U) || '' }}${{ github.event.inputs.KPM == 'KPM' && '_KPM' || github.event.inputs.KPM == 'KPN' && '_KPN' || '' }}${{ github.event.inputs.LSM_BBG == 'true' && '_BBG' || '' }}_ILH${{ env.XIAOMO_HMBIRD_ACTIVE == 'true' && '_HMBIRD' || '' }}${{ github.event.inputs.DROID_SPACES== 'true' && '_DS' || '' }}${{ github.event.inputs.RE_KERNEL == 'true' && '_REKER' || '' }}${{ github.event.inputs.LZ4_UPDATE == 'true' && '_LZ4UPD' || '' }}" >> $GITHUB_OUTPUT
 
       - name: Upload AnyKernel3
         uses: actions/upload-artifact@v7
         with:
           name: AnyKernel3_SukiSUUltra_${{ env.KSUVER }}_${{ steps.extract_info.outputs.value }}(${{ env.CKERNEL_VERSION }})${{ steps.suffix.outputs.value }}
           path: ./AnyKernel3/*
+          retention-days: 7
 
       - name: Extract and Process ZRAM Module
         if: startsWith(github.event.inputs.ZRAM, '1/')
