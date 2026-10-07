@@ -905,6 +905,8 @@ jobs:
           kotlin "$GITHUB_WORKSPACE/kernel_workspace/Action-Build/scripts/PatchFakePatches.kts" revert "$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/common"
 
       - name: Detect HMBIRD capability
+        env:
+          FILE: ${{ github.event.inputs.FILE }}
         if: ${{ github.event.inputs.SCHED_HMBIRD == 'true' }}
         run: |
           set -e
@@ -917,46 +919,39 @@ jobs:
           echo "XIAOMO_HMBIRD_STATUS=unsupported" >> "$GITHUB_ENV"
           echo "XIAOMO_HMBIRD_DISPLAY=未检测到支持" >> "$GITHUB_ENV"
 
-          # 设备树标记优先级最高，可直接区分一加官方 HMBIRD_GKI / HMBIRD_OGKI。
-          if grep -Rqs --include='*.dts' --include='*.dtsi' 'HMBIRD_GKI' "$ROOT" 2>/dev/null; then
-            echo "XIAOMO_HMBIRD_ACTIVE=true" >> "$GITHUB_ENV"
-            echo "XIAOMO_HMBIRD_DETECTED=true" >> "$GITHUB_ENV"
-            echo "XIAOMO_HMBIRD_MODE=gki" >> "$GITHUB_ENV"
-            echo "XIAOMO_HMBIRD_STATUS=native_gki" >> "$GITHUB_ENV"
-            echo "XIAOMO_HMBIRD_DISPLAY=原生支持（HMBIRD_GKI）" >> "$GITHUB_ENV"
-            echo "✅ 检测到官方 HMBIRD_GKI"
-            exit 0
+          # 只有已做过机型级确认的目标才允许根据设备树标记自动启用/转换，
+          # 避免共享源码树里“别的机型 DTS”导致误判。13T 当前批次已跳过，不会重构。
+          if [ "$FILE" = "oneplus_13t_b" ]; then
+            if grep -Rqs --include='*.dts' --include='*.dtsi' 'HMBIRD_GKI' "$ROOT" 2>/dev/null; then
+              echo "XIAOMO_HMBIRD_ACTIVE=true" >> "$GITHUB_ENV"
+              echo "XIAOMO_HMBIRD_DETECTED=true" >> "$GITHUB_ENV"
+              echo "XIAOMO_HMBIRD_MODE=gki" >> "$GITHUB_ENV"
+              echo "XIAOMO_HMBIRD_STATUS=native_gki" >> "$GITHUB_ENV"
+              echo "XIAOMO_HMBIRD_DISPLAY=检测到 HMBIRD_GKI（机型级确认）" >> "$GITHUB_ENV"
+              echo "✅ 13T 检测到 HMBIRD_GKI"
+              exit 0
+            fi
+            if grep -Rqs --include='*.dts' --include='*.dtsi' 'HMBIRD_OGKI' "$ROOT" 2>/dev/null; then
+              echo "XIAOMO_HMBIRD_DETECTED=true" >> "$GITHUB_ENV"
+              echo "XIAOMO_HMBIRD_MODE=ogki" >> "$GITHUB_ENV"
+              echo "XIAOMO_HMBIRD_STATUS=native_ogki" >> "$GITHUB_ENV"
+              echo "XIAOMO_HMBIRD_DISPLAY=检测到 HMBIRD_OGKI（机型级确认）" >> "$GITHUB_ENV"
+              echo "✅ 13T 检测到 HMBIRD_OGKI"
+              exit 0
+            fi
           fi
 
-          if grep -Rqs --include='*.dts' --include='*.dtsi' 'HMBIRD_OGKI' "$ROOT" 2>/dev/null; then
-            echo "XIAOMO_HMBIRD_DETECTED=true" >> "$GITHUB_ENV"
-            echo "XIAOMO_HMBIRD_MODE=ogki" >> "$GITHUB_ENV"
-            echo "XIAOMO_HMBIRD_STATUS=native_ogki" >> "$GITHUB_ENV"
-            echo "XIAOMO_HMBIRD_DISPLAY=原厂支持（HMBIRD_OGKI）" >> "$GITHUB_ENV"
-            echo "✅ 检测到官方 HMBIRD_OGKI"
-            exit 0
-          fi
-
-          # 兼容旧源码布局；只有明确的 HMBIRD 目录才判定为原生支持。
-          for p in "$COMMON"/kernel/sched/hmbird* "$ROOT"/vendor/oplus/kernel/cpu/sched_ext/hmbird*; do
-            [ -d "$p" ] || continue
-            echo "XIAOMO_HMBIRD_ACTIVE=true" >> "$GITHUB_ENV"
-            echo "XIAOMO_HMBIRD_DETECTED=true" >> "$GITHUB_ENV"
-            echo "XIAOMO_HMBIRD_MODE=native" >> "$GITHUB_ENV"
-            echo "XIAOMO_HMBIRD_STATUS=native" >> "$GITHUB_ENV"
-            echo "XIAOMO_HMBIRD_DISPLAY=原生支持" >> "$GITHUB_ENV"
-            echo "✅ 检测到源码原生 HMBIRD"
-            exit 0
-          done
-
-          # 仅有公共头文件/调度扩展时不直接宣称已启用，避免再次误报。
-          if [ -f "$COMMON/include/linux/sched/hmbird.h" ] || \
+          # 对未整机验证的其它型号只做“源码能力提示”，不因此自动宣称已启用，
+          # 也不会仅凭共享 DTS/公共头文件强制套用 HMBIRD 转换。
+          if grep -Rqs --include='*.dts' --include='*.dtsi' -E 'HMBIRD_(OGKI|GKI)' "$ROOT" 2>/dev/null || \
+             [ -f "$COMMON/include/linux/sched/hmbird.h" ] || \
+             find "$COMMON/kernel/sched" -maxdepth 1 -type d -name 'hmbird*' -print -quit 2>/dev/null | grep -q . || \
              find "$ROOT" -type d -path '*/vendor/oplus/kernel/cpu/sched_ext' -print -quit 2>/dev/null | grep -q .; then
             echo "XIAOMO_HMBIRD_DETECTED=true" >> "$GITHUB_ENV"
             echo "XIAOMO_HMBIRD_MODE=source" >> "$GITHUB_ENV"
             echo "XIAOMO_HMBIRD_STATUS=source_present" >> "$GITHUB_ENV"
-            echo "XIAOMO_HMBIRD_DISPLAY=源码具备 HMBIRD 支持（未确认启用）" >> "$GITHUB_ENV"
-            echo "ℹ️ 源码存在 HMBIRD 组件，但未发现设备级启用标记"
+            echo "XIAOMO_HMBIRD_DISPLAY=源码检测到 HMBIRD 组件（未确认启用）" >> "$GITHUB_ENV"
+            echo "ℹ️ 检测到 HMBIRD 相关源码；等待机型补丁或真机确认"
           fi
 
       # 仅在明确检测到官方 OGKI 标记时做 6.6+ 的 GKI 兼容转换。
