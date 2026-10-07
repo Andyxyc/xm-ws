@@ -1,5 +1,5 @@
 name: Pad test
-run-name: pad-pro-uapi5-${{ github.run_id }}
+run-name: pad-pro-alt-slot-spoof-${{ github.run_id }}
 on:
   workflow_dispatch:
   push:
@@ -20,6 +20,15 @@ jobs:
         uses: actions/checkout@v7
         with:
           persist-credentials: false
+      - name: Validate installer syntax
+        run: |
+          dash -n templates/anykernel.sh
+          sh -n templates/anykernel.sh
+          grep -q 'spoof_uname 2' templates/anykernel.sh
+          grep -q 'boot\$REF_SLOT' templates/anykernel.sh
+          grep -q 'SUSFS_INSTALLED_CODE' templates/anykernel.sh
+          echo "AK3 installer syntax and alternate-slot spoof logic OK"
+
       - name: Validate UAPI patch and existing handlers
         shell: python
         run: |
