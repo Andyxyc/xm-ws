@@ -20,7 +20,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: python
         run: |
-          import json, os, time, urllib.request, urllib.parse
+          import base64, json, os, time, urllib.request, urllib.parse
           from pathlib import Path
           repo = os.environ['GITHUB_REPOSITORY']
           sha = os.environ['GITHUB_SHA']
@@ -39,9 +39,14 @@ jobs:
                   print('Stopped superseded batch run', run['id'], flush=True)
           workflow = urllib.parse.quote('Build Kernel OnePlus.yml', safe='')
           path = '/actions/workflows/'+workflow
-          inputs = dict(SUSFS_CI='Release', KPM='KPM', SUSFS_META='', DYNAMIC_REPO='Numbersf', BUILD_TIME='-1', KSU_META='main/builtin/xiaomo/70fa0e092a2c81060823f8ae526eac14fdda2930', LZ4_UPDATE='false', ZRAM='0/lz4kd/8589934592', SUFFIX='-1', RESUBLEVEL='', FAST_BUILD='true', LSM_BBG='false', NETFILTER='true', CCM='false', UNICODE_BYPASS='true', SCHED_HMBIRD='true', DROID_SPACES='false', RE_KERNEL='false', SUSFS_DEV='false', SPACE_NOCLEAN='false', BUILD_NOCACHE='false')
+          inputs = dict(SUSFS_CI='Release', KPM='KPM', SUSFS_META='', DYNAMIC_REPO='Numbersf', BUILD_TIME='-1', KSU_META='main/builtin/xiaomo/70fa0e092a2c81060823f8ae526eac14fdda2930', LZ4_UPDATE='false', ZRAM='0/lz4kd/8589934592', SUFFIX='-1', RESUBLEVEL='', FAST_BUILD='true', LSM_BBG='false', NETFILTER='true', CCM='false', UNICODE_BYPASS='true', SCHED_HMBIRD='true', DROID_SPACES='false', RE_KERNEL='false', SUSFS_DEV='false', SPACE_NOCLEAN='true', BUILD_NOCACHE='false')
           receipts = []
           Path('receipts').mkdir(exist_ok=True)
+          for source in ('.github/workflows/Build Kernel OnePlus.yml', 'templates/anykernel.sh'):
+              data = api('/contents/'+urllib.parse.quote(source, safe='/')+'?ref='+sha)
+              destination = Path('receipts/sources') / source
+              destination.parent.mkdir(parents=True, exist_ok=True)
+              destination.write_bytes(base64.b64decode(data['content']))
           for target in ('oneplus_pad_pro_v', 'oneplus_pad_pro_b'):
               before = {r['id'] for r in api(path+'/runs?per_page=30')['workflow_runs']}
               api(path+'/dispatches', {'ref':'SukiSU-Ultra','inputs':dict(inputs,FILE=target)})
