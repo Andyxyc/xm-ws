@@ -1,166 +1,198 @@
 name: Batch
+run-name: batch-${{ github.run_id }}
 
 on:
   workflow_dispatch:
+  push:
+    branches: [SukiSU-Ultra]
+    paths: [.github/workflows/batch.yml]
 
 permissions:
   actions: write
   contents: read
 
+concurrency:
+  group: xm-device-batch
+  cancel-in-progress: false
+
 jobs:
   gate:
+    if: github.repository == 'Andyxyc/xm-ws'
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
-      - name: Dispatch smoke builds
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Prepare validation tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y python3-yaml shellcheck
+      - name: Validate syntax
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 - <<'PY'
+          from pathlib import Path
+          import re
+          import subprocess
+          import yaml
+          paths = [Path('.github/workflows/Build Kernel OnePlus.yml'), Path('.github/workflows/batch.yml')]
+          checked = 0
+          for path in paths:
+              doc = yaml.load(path.read_text(encoding='utf-8'), Loader=yaml.BaseLoader)
+              if not isinstance(doc, dict) or not isinstance(doc.get('jobs'), dict):
+                  raise SystemExit(f'Invalid workflow structure: {path}')
+              for job in doc['jobs'].values():
+                  for step in job.get('steps', []):
+                      code = step.get('run')
+                      if code is None:
+                          continue
+                      code = re.sub(r'\$\{\{.*?\}\}', 'CI_VALUE', code, flags=re.S)
+                      result = subprocess.run(['bash', '-n'], input=code, text=True, capture_output=True)
+                      if result.returncode:
+                          raise SystemExit(f"Syntax error: {path}: {step.get('name')}\n{result.stderr}")
+                      checked += 1
+          subprocess.run(['dash', '-n', 'templates/anykernel.sh'], check=True)
+          subprocess.run(['shellcheck', '-s', 'sh', '--severity=error', 'templates/anykernel.sh'], check=True)
+          print(f'YAML parse and shell syntax passed: {checked} workflow blocks plus installer. No device test performed.')
+          PY
+      - name: Dispatch and track exact builds
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          TAG="smoke-${GITHUB_RUN_ID}"
-          echo "TAG=$TAG" >> "$GITHUB_ENV"
-          smoke=(
-            "oneplus_10_pro_b"
-            "oneplus_11_b"
-            "oneplus_12_b"
-            "oneplus_13_b"
-            "oneplus_15"
-          )
-          for d in "${smoke[@]}"; do
-            gh workflow run "Build Kernel OnePlus.yml" --repo "$GITHUB_REPOSITORY" --ref SukiSU-Ultra \
-              -f FILE="$d" \
-              -f SUSFS_CI=Release \
-              -f KPM=KPM \
-              -f SUSFS_META="" \
-              -f BUILD_TIME=-1 \
-              -f KSU_META="main/builtin/xiaomo/70fa0e092a2c81060823f8ae526eac14fdda2930" \
-              -f LZ4_UPDATE=false \
-              -f ZRAM="0/lz4kd/8589934592" \
-              -f SUFFIX=-1 \
-              -f FAST_BUILD=true \
-              -f LSM_BBG=false \
-              -f NETFILTER=true \
-              -f CCM=false \
-              -f UNICODE_BYPASS=true \
-              -f SCHED_HMBIRD=true \
-              -f DROID_SPACES=false \
-              -f RE_KERNEL=false \
-              -f SUSFS_DEV=false \
-              -f SPACE_NOCLEAN=false \
-              -f BUILD_NOCACHE=false
-            sleep 3
-          done
+          /usr/bin/python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+          import time
+          from urllib.parse import quote
+          import yaml
 
-      - name: Wait for smoke builds
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          expected=5
-          deadline=$((SECONDS + 10200))
-          while [ "$SECONDS" -lt "$deadline" ]; do
-            runs="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "Build Kernel OnePlus.yml" --branch SukiSU-Ultra --limit 30 --json databaseId,status,conclusion,createdAt,url)"
-            # Select builds started after this batch run began. The five smoke builds are the newest build-workflow runs.
-            picked="$(printf '%s' "$runs" | jq 'sort_by(.createdAt) | reverse | .[0:5]')"
-            count="$(printf '%s' "$picked" | jq 'length')"
-            failed="$(printf '%s' "$picked" | jq '[.[] | select(.status=="completed" and .conclusion!="success")] | length')"
-            pending="$(printf '%s' "$picked" | jq '[.[] | select(.status!="completed")] | length')"
-            echo "smoke found=$count pending=$pending failed=$failed"
-            if [ "$failed" -gt 0 ]; then
-              printf '%s' "$picked" | jq .
-              echo "Smoke gate failed; full batch will not start."
-              exit 1
-            fi
-            if [ "$count" -eq "$expected" ] && [ "$pending" -eq 0 ]; then
-              echo "Smoke gate passed."
-              exit 0
-            fi
-            sleep 60
-          done
-          echo "Smoke gate timed out; full batch will not start."
-          exit 1
+          repo = os.environ['GITHUB_REPOSITORY']
+          ref = 'SukiSU-Ultra'
+          sha = os.environ['GITHUB_SHA']
+          if repo != 'Andyxyc/xm-ws' or os.environ.get('GITHUB_RUN_ATTEMPT') != '1':
+              raise SystemExit('Wrong repository or rerun; refusing potentially duplicate dispatches.')
+          workflow = 'Build Kernel OnePlus.yml'
+          source = Path('.github/workflows') / workflow
+          doc = yaml.load(source.read_text(encoding='utf-8'), Loader=yaml.BaseLoader)
+          fields = doc['on']['workflow_dispatch']['inputs']
+          devices = fields['FILE']['options']
+          pilots = ['oneplus_10_pro_b', 'oneplus_11_b', 'oneplus_12_b', 'oneplus_13_b', 'oneplus_15']
+          if len(devices) != len(set(devices)) or len(devices) != 57 or not set(pilots).issubset(devices):
+              raise SystemExit('Unexpected device matrix; no dispatch performed.')
+          values = {key: value.get('default', '') for key, value in fields.items()}
+          values.update(SUSFS_CI='Release', KPM='KPM', SUSFS_META='', BUILD_TIME='-1',
+                        KSU_META='main/builtin/xiaomo/70fa0e092a2c81060823f8ae526eac14fdda2930',
+                        LZ4_UPDATE='false', ZRAM='0/lz4kd/8589934592', SUFFIX='-1',
+                        FAST_BUILD='true', LSM_BBG='false', NETFILTER='true', CCM='false',
+                        UNICODE_BYPASS='true', SCHED_HMBIRD='true', DROID_SPACES='false',
+                        RE_KERNEL='false', SUSFS_DEV='false', SPACE_NOCLEAN='false', BUILD_NOCACHE='false')
+          if not set(values).issubset(fields) or len(values) > 25:
+              raise SystemExit('Unexpected workflow input schema.')
+          root = Path('batch-receipts')
+          root.mkdir(exist_ok=True)
+          journal = {'batch': os.environ['GITHUB_RUN_ID'], 'head_sha': sha, 'runs': [], 'state': 'preparing'}
 
-      - name: Dispatch remaining builds
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          remaining=(
-            "oneplus_nord_n30_se_5g_v"
-            "oneplus_10r_v"
-            "oneplus_nord_3_b"
-            "oneplus_ace_v"
-            "oneplus_ace_race_v"
-            "oneplus_10t_v"
-            "oneplus_11r_b"
-            "oneplus_ace2_b"
-            "oneplus_pad_lite_b"
-            "oneplus_pad_mt6983_b"
-            "oneplus_ace_2v_b"
-            "oneplus_ace_pro_v"
-            "oneplus_12r_b"
-            "oneplus_ace2_pro_b"
-            "oneplus_ace3_b"
-            "oneplus_open_b"
-            "oneplus_nord_ce4_b"
-            "oneplus_n6_b"
-            "oneplus_n6x_b"
-            "oneplus_pad_go_2_b"
-            "oneplus_turbo_6x_b"
-            "oneplus_nord_ce4_lite_5g_b"
-            "oneplus_nord_ce6"
-            "oneplus_nord_ce6_lite_b"
-            "oneplus_turbo_6v"
-            "oneplus_nord_4_b"
-            "oneplus_ace_3v_b"
-            "oneplus_pad_mt6897_b"
-            "oneplus_13r_b"
-            "oneplus_ace3_pro_b"
-            "oneplus_ace5_b"
-            "oneplus_pad_pro_b"
-            "oneplus_pad2_b"
-            "oneplus_nord_ce5_b"
-            "oneplus_nord_5_b"
-            "oneplus_ace5_pro_b"
-            "oneplus_13t_b"
-            "oneplus_13s_b"
-            "oneplus_pad_2_pro_b"
-            "oneplus_pad_3_b"
-            "oneplus_ace5_race_b"
-            "oneplus_ace5_ultra_b"
-            "oneplus_pad2_mt6991_b"
-            "oneplus_ace_6"
-            "oneplus_turbo_6"
-            "oneplus_nord_6"
-            "oneplus_ace_6t"
-            "oneplus_15r"
-            "oneplus_15t"
-            "oneplus_pad_3_pro"
-            "oneplus_pad_4"
-            "oneplus_ace6_ultra"
-          )
-          for d in "${remaining[@]}"; do
-            gh workflow run "Build Kernel OnePlus.yml" --repo "$GITHUB_REPOSITORY" --ref SukiSU-Ultra \
-              -f FILE="$d" \
-              -f SUSFS_CI=Release \
-              -f KPM=KPM \
-              -f SUSFS_META="" \
-              -f BUILD_TIME=-1 \
-              -f KSU_META="main/builtin/xiaomo/70fa0e092a2c81060823f8ae526eac14fdda2930" \
-              -f LZ4_UPDATE=false \
-              -f ZRAM="0/lz4kd/8589934592" \
-              -f SUFFIX=-1 \
-              -f FAST_BUILD=true \
-              -f LSM_BBG=false \
-              -f NETFILTER=true \
-              -f CCM=false \
-              -f UNICODE_BYPASS=true \
-              -f SCHED_HMBIRD=true \
-              -f DROID_SPACES=false \
-              -f RE_KERNEL=false \
-              -f SUSFS_DEV=false \
-              -f SPACE_NOCLEAN=false \
-              -f BUILD_NOCACHE=false
-            sleep 3
-          done
-          echo "Dispatched ${#remaining[@]} remaining device builds."
+          def save():
+              target = root / 'runs.json'
+              temp = target.with_suffix('.tmp')
+              temp.write_text(json.dumps(journal, ensure_ascii=False, indent=2), encoding='utf-8')
+              temp.replace(target)
+
+          def api(path, payload=None):
+              args = ['gh', 'api', path, '-H', 'Accept: application/vnd.github+json',
+                      '-H', 'X-GitHub-Api-Version: 2022-11-28']
+              data = None
+              if payload is not None:
+                  args += ['--method', 'POST', '--input', '-']
+                  data = json.dumps(payload)
+              # No automatic POST retry: a lost response may still mean a run was created.
+              result = subprocess.run(args, input=data, capture_output=True, text=True, timeout=90)
+              if result.returncode:
+                  raise RuntimeError(f'GitHub request failed ({result.returncode}): {result.stderr[-2000:]}')
+              return json.loads(result.stdout)
+
+          def check_head():
+              actual = api(f'repos/{repo}/branches/{quote(ref, safe="")}')['commit']['sha']
+              if actual != sha:
+                  raise RuntimeError('Branch changed during batch; no further runs will be dispatched.')
+
+          def dispatch(device, phase):
+              check_head()
+              record = {'device': device, 'phase': phase, 'state': 'submitting', 'run_id': None}
+              journal['runs'].append(record)
+              save()
+              payload = {'ref': ref, 'inputs': dict(values, FILE=device), 'return_run_details': True}
+              response = api(f'repos/{repo}/actions/workflows/{quote(workflow, safe="")}/dispatches', payload)
+              run_id = response.get('workflow_run_id')
+              if type(run_id) is not int or run_id <= 0 or any(x.get('run_id') == run_id for x in journal['runs'][:-1]):
+                  raise RuntimeError('Missing or duplicate run ID; stop without retrying the dispatch.')
+              record.update(run_id=run_id, state='submitted', url=response.get('html_url'))
+              save()
+              print(f'{phase}: {device}: {run_id}', flush=True)
+              return record
+
+          try:
+              check_head()
+              save()
+              first = [dispatch(device, 'pilot') for device in pilots]
+              deadline = time.monotonic() + 9000
+              while True:
+                  complete = 0
+                  for record in first:
+                      run = api(f'repos/{repo}/actions/runs/{record["run_id"]}')
+                      if run.get('head_sha') != sha or run.get('head_branch') != ref or run.get('event') != 'workflow_dispatch':
+                          raise RuntimeError('Run does not match the dispatched source/ref/event.')
+                      record.update(state=run['status'], conclusion=run.get('conclusion'))
+                      save()
+                      if run['status'] == 'completed':
+                          if run.get('conclusion') != 'success':
+                              raise RuntimeError(f'Pilot failed: {record["device"]}: {record["run_id"]}')
+                          artifacts = api(f'repos/{repo}/actions/runs/{record["run_id"]}/artifacts?per_page=100')
+                          valid = [a for a in artifacts.get('artifacts', [])
+                                   if a.get('name', '').startswith('AnyKernel3_')
+                                   and a.get('size_in_bytes', 0) > 0 and not a.get('expired', True)]
+                          if len(valid) != 1:
+                              raise RuntimeError('Pilot succeeded without one live AnyKernel3 artifact.')
+                          complete += 1
+                  print(f'Pilot builds complete: {complete}/5 (compile/artifact gate only).', flush=True)
+                  if complete == len(first):
+                      break
+                  if time.monotonic() >= deadline:
+                      raise RuntimeError('Pilot wait timed out; full batch was not dispatched.')
+                  time.sleep(60)
+              journal['state'] = 'pilot_compile_gate_passed'
+              save()
+              for device in devices:
+                  if device not in pilots:
+                      dispatch(device, 'remaining')
+                      time.sleep(2)
+              journal['state'] = 'all_dispatched_not_all_verified'
+              save()
+          except Exception as error:
+              journal['state'] = 'stopped'
+              journal['error'] = str(error)
+              save()
+              raise
+          finally:
+              summary = os.environ.get('GITHUB_STEP_SUMMARY')
+              if summary:
+                  with open(summary, 'a', encoding='utf-8') as stream:
+                      stream.write(f'Batch state: {journal["state"]}\n\n')
+                      stream.write('Compilation and artifact checks do not establish device boot compatibility.\n\n')
+                      for record in journal['runs']:
+                          stream.write(f'- {record["device"]}: {record["state"]}, run={record["run_id"]}\n')
+          PY
+      - name: Keep batch receipts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: batch-receipts-${{ github.run_id }}
+          path: batch-receipts/
+          if-no-files-found: warn
+          retention-days: 7
