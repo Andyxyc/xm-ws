@@ -68,6 +68,7 @@ jobs:
               Path('receipts').mkdir(exist_ok=True)
               Path('receipts/uapi-source-checks.json').write_text(json.dumps({
                   'pin': pin, 'checks': checks, 'sha256': source_digests,
+                  'patched_header_sha256': hashlib.sha256(header.encode()).hexdigest(),
                   'scope': 'Source and patch checks, not real-device runtime validation'
               }, indent=2) + '\n')
               print(json.dumps(checks), flush=True)
