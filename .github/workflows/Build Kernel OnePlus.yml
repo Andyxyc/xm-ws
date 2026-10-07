@@ -185,8 +185,6 @@ jobs:
       CCACHE_NOHARDLINK: "true"
       CCACHE_IS_KERNEL_COMPILING: "true"
       CCACHE_MAXSIZE: 5G
-      KBUILD_BUILD_USER: xiaomo
-      KBUILD_BUILD_HOST: xm-build
     steps:
       - name: Checkout
         uses: actions/checkout@v7
