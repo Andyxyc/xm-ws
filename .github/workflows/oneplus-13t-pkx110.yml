@@ -1,4 +1,5 @@
 name: 13T PKX110
+# retry-installer-syntax-fixed
 run-name: pkx110-16.0.10.500-${{ github.run_id }}
 
 on:
