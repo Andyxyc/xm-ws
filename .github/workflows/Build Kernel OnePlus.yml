@@ -1046,18 +1046,48 @@ jobs:
           test -f fs/fuse/backing.c
           test -f fs/fuse/dir.c
           test -f fs/fuse/fuse_i.h
-          grep -q '^CONFIG_FUSE_BPF=y        if: ${{ github.event.inputs.RE_KERNEL == 'true' }}
+          grep -qF 'CONFIG_FUSE_BPF=y' arch/arm64/configs/gki_defconfig
+          grep -qF 'bpf based lookup_revalidate here.' fs/fuse/dir.c
+
+          # Provenance: Android kernel/common Gerrit 3943780
+          # Change-Id I35350e18ea15b706051dd40a8bae363529a73426.
+          # It is an unmerged/abandoned upstream proposal; apply only to the
+          # exact Pad Pro Linux 6.1 source and fail on any context mismatch.
+          patch -p1 --dry-run --forward --fuzz=0 < "$PATCH_FILE"
+          patch -p1 --forward --fuzz=0 < "$PATCH_FILE"
+
+          grep -qF 'int fuse_lookup_revalidate_initialize(' fs/fuse/backing.c
+          grep -qF 'int fuse_lookup_revalidate_backing(' fs/fuse/backing.c
+          grep -qF 'void *fuse_lookup_revalidate_finalize(' fs/fuse/backing.c
+          grep -qF 'fuse_lookup_revalidate_initialize,' fs/fuse/dir.c
+          grep -qF 'fuse_lookup_revalidate_backing,' fs/fuse/dir.c
+          grep -qF 'fuse_lookup_revalidate_finalize,' fs/fuse/dir.c
+          if grep -qF "bpf based lookup_revalidate here." fs/fuse/dir.c; then
+            echo "❌ old FUSE-BPF revalidation bypass branch is still present"
+            exit 1
+          fi
+          git diff --check -- fs/fuse/backing.c fs/fuse/dir.c fs/fuse/fuse_i.h
+
+          echo "XIAOMO_FUSE_BPF_STATUS=lookup_revalidate" >> "$GITHUB_ENV"
+          echo "XIAOMO_FUSE_BPF_DISPLAY=lookup revalidate" >> "$GITHUB_ENV"
+          echo "XIAOMO_FUSE_BPF_SOURCE=Android kernel/common Gerrit 3943780" >> "$GITHUB_ENV"
+          echo "✅ Pad Pro FUSE-BPF lookup revalidation patch applied with exact context"
+
+          source "$REJ_CHECKER"
+          check_rejects .
+
+      - name: Apply RE_KERNEL
+        if: ${{ github.event.inputs.RE_KERNEL == 'true' }}
         run: |
           RE_DIR="${GITHUB_WORKSPACE}/kernel_workspace/Re-Kernel/LKM-Source"
           cd kernel_workspace/kernel_platform/common
           sed -i '/endmenu/i source "drivers/rekernel/Kconfig"' drivers/Kconfig
-          sed -i '$a \#Re-Kernel Support\nobj-$(CONFIG_REKERNEL) += rekernel/' drivers/Makefile
+          sed -i '$a \\#Re-Kernel Support\\nobj-$(CONFIG_REKERNEL) += rekernel/' drivers/Makefile
           mkdir -p drivers/rekernel
           cp -r "${RE_DIR}"/* drivers/rekernel/
           if [ -f BUILD.bazel ]; then
             sed -i '0,/name = "kernel_aarch64",/{/module_implicit_outs/s|,$| + ["drivers/rekernel/rekernel.ko"],|}' BUILD.bazel
           fi
-
       - name: Apply DROID_SPACES
         env:
           FILE: ${{ github.event.inputs.FILE }}
