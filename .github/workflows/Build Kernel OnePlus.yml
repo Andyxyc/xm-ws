@@ -546,6 +546,49 @@ jobs:
           # 内核版本的数字转换，仅前两位不包含 SUBLEVEL
           echo "KERNEL_SHORT_PATCH_VERSION=$(echo $NEW_VERSION | cut -d. -f1,2 | tr '.' '_')" >> $GITHUB_ENV
 
+      - name: Historical 123Pan support baseline
+        env:
+          TARGET_FILE: ${{ github.event.inputs.FILE }}
+          CURRENT_KERNEL: ${{ env.CKERNEL_VERSION }}
+          CURRENT_ANDROID: ${{ env.ANDROID_VERSION }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+
+          matrix = json.loads(Path("reference/123pan-historical-matrix.json").read_text(encoding="utf-8"))
+          target = os.environ["TARGET_FILE"]
+          row = next((x for x in matrix["models"] if x["config"] == target), None)
+          if row is None:
+              print(f"No historical 123Pan baseline for {target}; continuing with official source.")
+              raise SystemExit(0)
+
+          def vtuple(value):
+              return tuple(int(part) for part in str(value).split(".") if part != "")
+
+          current_kernel = os.environ["CURRENT_KERNEL"]
+          baseline_kernel = row.get("baseline_kernel")
+          if baseline_kernel and vtuple(current_kernel) < vtuple(baseline_kernel):
+              raise SystemExit(
+                  f"Refusing regression: {target} official source resolved to kernel {current_kernel}, "
+                  f"below historical baseline {baseline_kernel}."
+              )
+
+          current_android = os.environ.get("CURRENT_ANDROID", "")
+          baseline_android = row.get("android")
+          if current_android and baseline_android and vtuple(current_android) < vtuple(baseline_android):
+              raise SystemExit(
+                  f"Refusing Android/source regression: {target} resolved to {current_android}, "
+                  f"below historical baseline {baseline_android}."
+              )
+
+          print(
+              f"Historical baseline OK: {row['model']} | Android {current_android} | "
+              f"kernel {current_kernel} | baseline {baseline_kernel or 'n/a'}"
+          )
+          PY
+
       - name: Rust Version Handling
         run: |
           cd kernel_workspace/kernel_platform
