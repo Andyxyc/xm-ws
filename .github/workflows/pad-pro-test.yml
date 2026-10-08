@@ -104,20 +104,21 @@ jobs:
               if 'CONFIG_FUSE_BPF=y' not in config.splitlines():
                   raise SystemExit('Pad Pro source does not have CONFIG_FUSE_BPF=y')
 
-              patch_paths = (
-                  'patches/fuse_default_ignorable_lookup_6.1.patch',
-                  'patches/fuse_bpf_lookup_revalidate_6.1.patch',
+              apply_script = str(Path('scripts/padpro_fuse_name_filter.py').resolve())
+              subprocess.run(
+                  ['python3', apply_script, str(root)],
+                  check=True, timeout=30
               )
-              for patch_path in patch_paths:
-                  patch = str(Path(patch_path).resolve())
-                  subprocess.run(
-                      ['patch', '-p1', '--batch', '--forward', '--fuzz=0', '--dry-run', '-i', patch],
-                      cwd=root, check=True, timeout=30
-                  )
-                  subprocess.run(
-                      ['patch', '-p1', '--batch', '--forward', '--fuzz=0', '-i', patch],
-                      cwd=root, check=True, timeout=30
-                  )
+
+              patch = str(Path('patches/fuse_bpf_lookup_revalidate_6.1.patch').resolve())
+              subprocess.run(
+                  ['patch', '-p1', '--batch', '--forward', '--fuzz=0', '--dry-run', '-i', patch],
+                  cwd=root, check=True, timeout=30
+              )
+              subprocess.run(
+                  ['patch', '-p1', '--batch', '--forward', '--fuzz=0', '-i', patch],
+                  cwd=root, check=True, timeout=30
+              )
 
               backing = (root / 'fs/fuse/backing.c').read_text()
               directory = (root / 'fs/fuse/dir.c').read_text()
@@ -141,7 +142,7 @@ jobs:
               Path('receipts/fuse-bpf-source-checks.json').write_text(json.dumps({
                   'source': owner_repo,
                   'ref': ref,
-                  'name_filter_patch': 'fuse_default_ignorable_lookup_6.1.patch',
+                  'name_filter_applicator': 'scripts/padpro_fuse_name_filter.py',
                   'name_filter_basis': 'FuseFixer Default_Ignorable_Code_Point normalization, moved kernel-side before FuseDaemon policy',
                   'gerrit_change': 3943780,
                   'change_id': 'I35350e18ea15b706051dd40a8bae363529a73426',
