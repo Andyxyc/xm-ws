@@ -182,7 +182,9 @@ jobs:
           grep -qF 'fuse_default_ignorable_code_point' fs/fuse/dir.c
           grep -qF 'fuse_android_private_dir_readdir_denied' fs/fuse/readdir.c
           grep -qF 'fuse_lookup_revalidate_initialize' fs/fuse/backing.c
-          git diff --check
+          # SUSFS touches unrelated files that carry upstream whitespace.
+          # Validate only the storage-fix files we own in this step.
+          git diff --check -- fs/unicode/utf8-norm.c fs/fuse/dir.c fs/fuse/readdir.c fs/fuse/backing.c fs/fuse/fuse_i.h
 
           echo "XIAOMO_UNICODE_STATUS=runtime_utf8_norm" >> "$GITHUB_ENV"
           echo "XIAOMO_UNICODE_DISPLAY=runtime utf8-norm" >> "$GITHUB_ENV"
