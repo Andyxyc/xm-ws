@@ -150,27 +150,34 @@ back = replace_once(
     back,
     "int fuse_lookup_initialize(struct fuse_bpf_args *fa, struct fuse_lookup_io *fli,\n"
     "\t       struct inode *dir, struct dentry *entry, unsigned int flags)\n"
-    "{\n\t*fa = (struct fuse_bpf_args) {",
-    "int fuse_lookup_initialize(struct fuse_bpf_args *fa, struct fuse_lookup_io *fli,\n"
-    "\t       struct inode *dir, struct dentry *entry, unsigned int flags)\n"
-    "{\n\tfli->filtered_name_len = fuse_filter_lookup_name(entry->d_name.name,\n"
-    "\t\t\tentry->d_name.len, fli->filtered_name,\n"
-    "\t\t\tsizeof(fli->filtered_name));\n\n"
-    "\t*fa = (struct fuse_bpf_args) {",
-    "BPF lookup filtered buffer",
-)
-
-back = replace_once(
-    back,
+    "{\n"
+    "\t*fa = (struct fuse_bpf_args) {\n"
+    "\t\t.nodeid = get_fuse_inode(dir)->nodeid,\n"
+    "\t\t.opcode = FUSE_LOOKUP,\n"
+    "\t\t.in_numargs = 1,\n"
+    "\t\t.out_numargs = 2,\n"
+    "\t\t.flags = FUSE_BPF_OUT_ARGVAR,\n"
     "\t\t.in_args[0] = (struct fuse_bpf_in_arg) {\n"
     "\t\t\t.size = entry->d_name.len + 1,\n"
     "\t\t\t.value = entry->d_name.name,\n"
     "\t\t},",
+    "int fuse_lookup_initialize(struct fuse_bpf_args *fa, struct fuse_lookup_io *fli,\n"
+    "\t       struct inode *dir, struct dentry *entry, unsigned int flags)\n"
+    "{\n"
+    "\tfli->filtered_name_len = fuse_filter_lookup_name(entry->d_name.name,\n"
+    "\t\t\tentry->d_name.len, fli->filtered_name,\n"
+    "\t\t\tsizeof(fli->filtered_name));\n\n"
+    "\t*fa = (struct fuse_bpf_args) {\n"
+    "\t\t.nodeid = get_fuse_inode(dir)->nodeid,\n"
+    "\t\t.opcode = FUSE_LOOKUP,\n"
+    "\t\t.in_numargs = 1,\n"
+    "\t\t.out_numargs = 2,\n"
+    "\t\t.flags = FUSE_BPF_OUT_ARGVAR,\n"
     "\t\t.in_args[0] = (struct fuse_bpf_in_arg) {\n"
     "\t\t\t.size = fli->filtered_name_len + 1,\n"
     "\t\t\t.value = fli->filtered_name,\n"
     "\t\t},",
-    "BPF lookup filtered argument",
+    "BPF lookup filtered initialize block",
 )
 
 DIR.write_text(dir_c)
