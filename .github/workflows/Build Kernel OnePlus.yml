@@ -514,6 +514,18 @@ jobs:
           PY
           fi
 
+          # Numbersf's oldest Ace T manifest kept an obsolete "oneplus/" prefix.
+          # The two OnePlusOSS source repositories still publish the exact branch
+          # as mt6895_t_13.1.0_oneplus_ace, so normalize only this historical manifest.
+          if [ "$FILE" = "oneplus_ace_t" ]; then
+            sed -i 's#revision="oneplus/mt6895_t_13.1.0_oneplus_ace"#revision="mt6895_t_13.1.0_oneplus_ace"#g' ".repo/manifests/${FILE}.xml"
+            grep -q 'revision="mt6895_t_13.1.0_oneplus_ace"' ".repo/manifests/${FILE}.xml" || {
+              echo "❌ Ace T historical branch normalization failed"
+              exit 35
+            }
+            echo "✅ Ace T historical OnePlusOSS branch normalized"
+          fi
+
           repo sync -c -j$(nproc) --no-clone-bundle --no-tags --force-sync
 
           if [ "${{ github.event.inputs.SOURCE_PROFILE }}" = "PKX110_16_0_10_500_118" ]; then
@@ -961,8 +973,30 @@ jobs:
       - name: Revert and Postfix Fake Patches
         if: ${{ github.event.inputs.SUSFS_META != '-1' }}
         run: |
-          kotlin "$GITHUB_WORKSPACE/kernel_workspace/Action-Build/scripts/PatchFakePatches.kts" postfix "$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/common"
-          kotlin "$GITHUB_WORKSPACE/kernel_workspace/Action-Build/scripts/PatchFakePatches.kts" revert "$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/common"
+          set -e
+          COMMON="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/common"
+          kotlin "$GITHUB_WORKSPACE/kernel_workspace/Action-Build/scripts/PatchFakePatches.kts" postfix "$COMMON"
+          kotlin "$GITHUB_WORKSPACE/kernel_workspace/Action-Build/scripts/PatchFakePatches.kts" revert "$COMMON"
+
+          # PatchFakePatches may restore Android trace-hook includes after the
+          # vendor-tree compatibility cleanup above. Remove only includes whose
+          # actual header is absent; otherwise keep the vendor hook untouched.
+          cd "$COMMON"
+          fix_missing_trace_include() {
+            src="$1"
+            header="$2"
+            [ -f "$src" ] || return 0
+            if grep -qF "#include <trace/hooks/$header>" "$src" && [ ! -f "include/trace/hooks/$header" ]; then
+              sed -i "\|^#include <trace/hooks/$header>$|d" "$src"
+              grep -qF "#include <trace/hooks/$header>" "$src" && {
+                echo "❌ failed to remove unavailable trace/hooks/$header from $src"
+                exit 17
+              }
+              echo "✅ removed unavailable trace/hooks/$header from $src after fake-patch revert"
+            fi
+          }
+          fix_missing_trace_include fs/namespace.c blk.h
+          fix_missing_trace_include fs/super.c fs.h
 
       - name: Detect HMBIRD capability
         env:
