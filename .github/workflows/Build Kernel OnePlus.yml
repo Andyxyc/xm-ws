@@ -631,7 +631,9 @@ jobs:
               raise SystemExit(0)
 
           def vtuple(value):
-              return tuple(int(part) for part in str(value).split(".") if part != "")
+              parts = [int(part) for part in str(value).split(".") if part != ""]
+              parts.extend([0] * (4 - len(parts)))
+              return tuple(parts)
 
           current_kernel = os.environ["CURRENT_KERNEL"]
           baseline_kernel = row.get("baseline_kernel")
@@ -847,7 +849,36 @@ jobs:
             exit 14
           fi
 
-          git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
+          clone_branch_retry() {
+            local dest="$1" branch="$2" url="$3"
+            local attempt
+            for attempt in 1 2 3; do
+              rm -rf "$dest"
+              echo "clone $dest attempt $attempt/3"
+              if git -c http.version=HTTP/1.1 clone --depth=1 -b "$branch" "$url" "$dest"; then
+                return 0
+              fi
+              sleep $((attempt * 5))
+            done
+            echo "❌ clone failed after 3 attempts: $url ($branch)"
+            return 1
+          }
+          clone_retry() {
+            local dest="$1" url="$2"
+            local attempt
+            for attempt in 1 2 3; do
+              rm -rf "$dest"
+              echo "clone $dest attempt $attempt/3"
+              if git -c http.version=HTTP/1.1 clone --depth=1 "$url" "$dest"; then
+                return 0
+              fi
+              sleep $((attempt * 5))
+            done
+            echo "❌ clone failed after 3 attempts: $url"
+            return 1
+          }
+
+          clone_branch_retry susfs4ksu "gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}" https://gitlab.com/simonpunk/susfs4ksu.git
           cd susfs4ksu
           SUSFS_VERSION=$(awk -F= '$1=="version" {print $2}' ksu_module_susfs/module.prop | head -n1)
           case "$SUSFS_VERSION" in
@@ -864,7 +895,7 @@ jobs:
           if [ "${{ github.event.inputs.LZ4_UPDATE }}" = "true" ]; then
             git clone https://github.com/Numbersf/lz4_oplus.git
           fi
-          git clone https://github.com/ShirkNeko/SukiSU_patch.git
+          clone_retry SukiSU_patch https://github.com/ShirkNeko/SukiSU_patch.git
           cd kernel_platform
           if [ "${{ github.event.inputs.SUSFS_META }}" != "-1" ]; then
             echo "正在拉取susfs补丁"
@@ -894,6 +925,18 @@ jobs:
             echo "正在打susfs补丁"
             patch -p1 < 50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch || true
             echo "susfs_patch完成"
+
+            # Some OnePlus MTK vendor trees do not ship Android's trace/hooks/blk.h.
+            # The generic SUSFS GKI patch carries that include as upstream context;
+            # keeping it on such vendor trees makes fs/namespace.c fail immediately.
+            if grep -qF '#include <trace/hooks/blk.h>' fs/namespace.c && [ ! -f include/trace/hooks/blk.h ]; then
+              sed -i '\|^#include <trace/hooks/blk.h>$|d' fs/namespace.c
+              if grep -qF '#include <trace/hooks/blk.h>' fs/namespace.c; then
+                echo "❌ failed to remove unavailable trace/hooks/blk.h include"
+                exit 16
+              fi
+              echo "✅ removed unavailable trace/hooks/blk.h include for vendor kernel"
+            fi
           fi
           source $REJ_CHECKER
           check_rejects .
@@ -949,9 +992,9 @@ jobs:
              find "$ROOT" -type d -path '*/vendor/oplus/kernel/cpu/sched_ext' -print -quit 2>/dev/null | grep -q .; then
             echo "XIAOMO_HMBIRD_DETECTED=true" >> "$GITHUB_ENV"
             echo "XIAOMO_HMBIRD_MODE=source" >> "$GITHUB_ENV"
-            echo "XIAOMO_HMBIRD_STATUS=source_present" >> "$GITHUB_ENV"
-            echo "XIAOMO_HMBIRD_DISPLAY=源码检测到 HMBIRD 组件（未确认启用）" >> "$GITHUB_ENV"
-            echo "ℹ️ 检测到 HMBIRD 相关源码；等待机型补丁或真机确认"
+            echo "XIAOMO_HMBIRD_STATUS=source_preserved" >> "$GITHUB_ENV"
+            echo "XIAOMO_HMBIRD_DISPLAY=源码 HMBIRD 原样保留（未真机）" >> "$GITHUB_ENV"
+            echo "✅ 检测到 HMBIRD 相关源码：保持原厂实现，不覆盖、不降级"
           fi
 
       # 仅在明确检测到官方 OGKI 标记时做 6.6+ 的 GKI 兼容转换。
@@ -1276,9 +1319,26 @@ jobs:
             exit 0
           fi
 
-          # 源码只有公共组件但没有设备级启用标记时，不冒充“原生已启用”，继续尝试机型补丁。
-          if ! git clone https://github.com/Numbersf/SCHED_PATCH.git -b "$CPU"; then
-            echo "ℹ️ 没有该 CPU 的风驰补丁"
+          # 只要原厂源码已经带 HMBIRD 组件，就优先原样保留。
+          # 没有原型机时不再叠加第三方风驰补丁，避免把原厂调度链改坏。
+          if [ "${XIAOMO_HMBIRD_STATUS:-unsupported}" = "source_preserved" ]; then
+            echo "✅ 原厂 HMBIRD 源码已保留；无真机时跳过额外覆盖补丁"
+            exit 0
+          fi
+
+          clone_sched_retry() {
+            local attempt
+            for attempt in 1 2 3; do
+              rm -rf SCHED_PATCH
+              if git -c http.version=HTTP/1.1 clone --depth=1 https://github.com/Numbersf/SCHED_PATCH.git -b "$CPU" SCHED_PATCH; then
+                return 0
+              fi
+              sleep $((attempt * 5))
+            done
+            return 1
+          }
+          if ! clone_sched_retry; then
+            echo "ℹ️ 没有该 CPU 的风驰补丁，或补丁仓库暂时不可用"
             exit 0
           fi
 
