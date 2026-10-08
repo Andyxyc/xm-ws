@@ -4,7 +4,13 @@ on:
   workflow_dispatch:
   push:
     branches: [SukiSU-Ultra]
-    paths: [.github/workflows/pad-pro-test.yml]
+    paths:
+      - .github/workflows/pad-pro-test.yml
+      - .github/workflows/Build Kernel OnePlus.yml
+      - scripts/padpro_fuse_name_filter.py
+      - patches/fuse_bpf_lookup_revalidate_6.1.patch
+      - patches/unicode_bypass_fix_6.1+.patch
+      - templates/anykernel.sh
 permissions:
   actions: write
   contents: read
