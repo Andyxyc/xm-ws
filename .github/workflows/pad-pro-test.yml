@@ -42,10 +42,14 @@ jobs:
             echo "❌ AK3 contains a literal backslash-n before ui_print"
             exit 1
           fi
-          grep -q 'Apply Pad Pro FUSE-BPF lookup revalidation' '.github/workflows/Build Kernel OnePlus.yml'
+          grep -q 'Apply OnePlus FUSE default-ignorable lookup filter' '.github/workflows/Build Kernel OnePlus.yml'
+          grep -q 'Apply OnePlus Android data-obb readdir guard' '.github/workflows/Build Kernel OnePlus.yml'
+          grep -q 'Apply OnePlus FUSE-BPF lookup revalidation' '.github/workflows/Build Kernel OnePlus.yml'
           grep -q 'storage-fix-status.txt' '.github/workflows/Build Kernel OnePlus.yml'
           test "$(grep -c 'name: Post-build Disk Check' '.github/workflows/Build Kernel OnePlus.yml')" -eq 1
-          test "$(grep -c 'name: Apply Pad Pro FUSE-BPF lookup revalidation' '.github/workflows/Build Kernel OnePlus.yml')" -eq 1
+          test "$(grep -c 'name: Apply OnePlus FUSE default-ignorable lookup filter' '.github/workflows/Build Kernel OnePlus.yml')" -eq 1
+          test "$(grep -c 'name: Apply OnePlus Android data-obb readdir guard' '.github/workflows/Build Kernel OnePlus.yml')" -eq 1
+          test "$(grep -c 'name: Apply OnePlus FUSE-BPF lookup revalidation' '.github/workflows/Build Kernel OnePlus.yml')" -eq 1
           if grep -q '零宽修复：已启用' templates/anykernel.sh; then
             echo "❌ misleading hard-coded zero-width status is still present"
             exit 1
