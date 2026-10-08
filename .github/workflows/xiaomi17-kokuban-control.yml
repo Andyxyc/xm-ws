@@ -1,0 +1,223 @@
+name: Xiaomi 17 Pro Max Kokuban Control
+
+run-name: Xiaomi17ProMax-Control-${{ github.run_id }}
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [SukiSU-Ultra]
+    paths:
+      - .github/workflows/xiaomi17-kokuban-control.yml
+      - templates/anykernel_xiaomi17_canoe_control.sh
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: xiaomi17promax-kokuban-control
+  cancel-in-progress: false
+
+env:
+  TZ: Asia/Shanghai
+  MI17_BASE_REPO: YuzakiKokuban/android_kernel_xiaomi_sm8850
+  MI17_BASE_SHA: 3b4e958c4ea606d089c009503142521f183ae1dd
+  KERNEL_BASE: "6.12.23"
+  LOCALVER: -android16-Kokuban-SilverWolf-LKM-g3b4e958c4ea6-4k
+
+jobs:
+  control:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            aria2 bc bison flex build-essential libssl-dev libelf-dev libdw-dev \
+            dwarves ccache zstd unzip zip rsync python3 git curl
+
+      - name: Fetch exact Kokuban LKM 6.12.23 source
+        run: |
+          set -euo pipefail
+          mkdir -p kernel_workspace
+          cd kernel_workspace
+          git init kernel
+          git -C kernel remote add origin "https://github.com/${MI17_BASE_REPO}.git"
+          git -C kernel fetch --depth=1 origin "$MI17_BASE_SHA"
+          git -C kernel checkout --detach FETCH_HEAD
+          [ "$(git -C kernel rev-parse HEAD)" = "$MI17_BASE_SHA" ]
+
+          VER="$(awk '/^VERSION =/ {v=$3} /^PATCHLEVEL =/ {p=$3} /^SUBLEVEL =/ {s=$3} END {print v"."p"."s}' kernel/Makefile)"
+          [ "$VER" = "$KERNEL_BASE" ]
+          grep -q '^KMI_GENERATION=5$' kernel/build.config.constants
+          grep -q '^CLANG_VERSION=r536225$' kernel/build.config.constants
+
+      - name: Fetch Kokuban toolchain
+        run: |
+          set -euo pipefail
+          cd kernel_workspace
+          mkdir -p clang19 rust
+
+          aria2c -q -s16 -x16 -k1M \
+            https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang19-r536225/clang-r536225.zip \
+            -o clang.zip
+          unzip -q clang.zip -d clang19
+          rm clang.zip
+
+          aria2c -q -s16 -x16 -k1M \
+            https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang19-r536225/rust.zip \
+            -o rust.zip
+          unzip -q rust.zip -d rust
+          rm rust.zip
+
+          aria2c -q -s16 -x16 -k1M \
+            https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang19-r536225/build-tools.zip \
+            -o build-tools.zip
+          unzip -q build-tools.zip
+          rm build-tools.zip
+
+      - name: Reproduce Kokuban CI environment
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/kernel_workspace"
+          K="$ROOT/kernel"
+          DEF="$K/arch/arm64/configs/gki_defconfig"
+
+          # Kokuban CI GKI 6.12 preparation.
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path("kernel_workspace/kernel/arch/arm64/configs/gki_defconfig")
+          s=p.read_text()
+          entries={
+            "CONFIG_RUST":"y",
+            "CONFIG_ANDROID_BINDER_IPC_RUST":"m",
+            "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE":"y",
+            "CONFIG_HEADERS_INSTALL":"n",
+            "CONFIG_TMPFS_XATTR":"y",
+            "CONFIG_TMPFS_POSIX_ACL":"y",
+            "CONFIG_OVERLAY_FS_REDIRECT_DIR":"y",
+            "CONFIG_OVERLAY_FS_INDEX":"y",
+            "CONFIG_OVERLAY_FS_XINO_AUTO":"y",
+            "CONFIG_OVERLAY_FS_METACOPY":"y",
+            "CONFIG_OVERLAY_FS_DEBUG":"y",
+            "CONFIG_TMPFS_INODE64":"y",
+            "CONFIG_TMPFS_QUOTA":"y",
+          }
+          lines=s.splitlines()
+          for key,val in entries.items():
+              lines=[ln for ln in lines if not (ln.startswith(key+"=") or ln==f"# {key} is not set")]
+              lines.append(f"{key}={val}")
+          lines=[ln for ln in lines if not (ln.startswith("CONFIG_LOCALVERSION=") or ln=="# CONFIG_LOCALVERSION_AUTO is not set" or ln.startswith("CONFIG_LOCALVERSION_AUTO="))]
+          lines.append('CONFIG_LOCALVERSION="' + __import__('os').environ['LOCALVER'] + '"')
+          lines.append('CONFIG_LOCALVERSION_AUTO=n')
+          p.write_text("\n".join(lines)+"\n")
+          PY
+
+          # Same generated-symbol stability and Android common build flags used by Kokuban CI.
+          {
+            echo "KBUILD_GENDWARFKSYMS_STABLE=1"
+            echo "KBUILD_BUILD_USER=build-user"
+            echo "KBUILD_BUILD_HOST=build-host"
+            echo "LC_ALL=C"
+            echo "KCFLAGS=-D__ANDROID_COMMON_KERNEL__"
+            echo "KCPPFLAGS=-D__ANDROID_COMMON_KERNEL__"
+            echo "IN_KERNEL_MODULES=1"
+            echo "DO_NOT_STRIP_MODULES=1"
+            echo "PAGE_SIZE=4096"
+            echo "TARGET_SOC=sm8850"
+          } >> "$GITHUB_ENV"
+
+          : > "$K/protected_module_names_list"
+          : > "$K/protected_exports_list"
+
+      - name: Build pure Kokuban control Image
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/kernel_workspace"
+          K="$ROOT/kernel"
+
+          export PATH="$ROOT/clang19/bin:$ROOT/build-tools/bin:$ROOT/rust/bin:$PATH"
+          export CC="$ROOT/clang19/bin/clang"
+          export HOSTCC="$ROOT/clang19/bin/clang"
+          export RUSTC=rustc
+          export HOSTRUSTC=rustc
+          export BINDGEN=bindgen
+          export LIBCLANG_PATH="$ROOT/clang19/lib"
+          export ARCH=arm64 SUBARCH=arm64 LLVM=1 LLVM_IAS=1
+          export LD=ld.lld HOSTLD=ld.lld AR=llvm-ar NM=llvm-nm
+          export OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump READELF=llvm-readelf STRIP=llvm-strip
+          export LOCALVERSION=""
+
+          cd "$K"
+
+          source ./_setup_env.sh 2>/dev/null || true
+          make O=out ARCH=arm64 SUBARCH=arm64 LLVM=1 LLVM_IAS=1 \
+            TARGET_SOC=sm8850 LOCALVERSION_AUTO=n LOCALVERSION= gki_defconfig
+
+          scripts/config --file out/.config --disable TRIM_UNUSED_KSYMS
+          scripts/config --file out/.config \
+            --enable LTO_NONE --disable LTO_CLANG_THIN --disable LTO_CLANG_FULL
+
+          source ./_setup_env.sh 2>/dev/null || true
+          make O=out ARCH=arm64 SUBARCH=arm64 LLVM=1 LLVM_IAS=1 \
+            TARGET_SOC=sm8850 LOCALVERSION_AUTO=n LOCALVERSION= olddefconfig
+
+          # Control build must be clean: no built-in root/SUSFS from our project.
+          if grep -q '^CONFIG_KSU=y$' out/.config; then
+            echo "❌ Control unexpectedly enabled KSU"
+            exit 20
+          fi
+          if grep -q '^CONFIG_KSU_SUSFS=y$' out/.config; then
+            echo "❌ Control unexpectedly enabled SUSFS"
+            exit 21
+          fi
+
+          source ./_setup_env.sh 2>/dev/null || true
+          make -j"$(nproc)" O=out ARCH=arm64 SUBARCH=arm64 LLVM=1 LLVM_IAS=1 \
+            TARGET_SOC=sm8850 LOCALVERSION_AUTO=n LOCALVERSION= Image
+
+          test -s out/arch/arm64/boot/Image
+          REL="$(make -s O=out ARCH=arm64 LLVM=1 LOCALVERSION_AUTO=n LOCALVERSION= kernelrelease)"
+          echo "Control release: $REL"
+          [ "$REL" = "6.12.23$LOCALVER" ] || {
+            echo "❌ Control release mismatch"
+            exit 22
+          }
+
+          cp out/.config "$GITHUB_WORKSPACE/control.config"
+          cp out/vmlinux.symvers "$GITHUB_WORKSPACE/control.vmlinux.symvers" 2>/dev/null || true
+
+      - name: Package official-style canoe control AK3
+        run: |
+          set -euo pipefail
+          git clone --depth=1 https://github.com/YuzakiKokuban/AnyKernel3 AnyKernel3
+          rm -rf AnyKernel3/.git
+          cp "$GITHUB_WORKSPACE/templates/anykernel_xiaomi17_canoe_control.sh" AnyKernel3/anykernel.sh
+          cp "$GITHUB_WORKSPACE/kernel_workspace/kernel/out/arch/arm64/boot/Image" AnyKernel3/Image
+
+          dash -n AnyKernel3/anykernel.sh
+          sh -n AnyKernel3/anykernel.sh
+          test -s AnyKernel3/Image
+
+          echo "CONTROL=Kokuban-LKM-source-only" > AnyKernel3/control-info.txt
+          echo "SOURCE=$MI17_BASE_REPO@$MI17_BASE_SHA" >> AnyKernel3/control-info.txt
+          echo "ROOT=none" >> AnyKernel3/control-info.txt
+          echo "SUSFS=none" >> AnyKernel3/control-info.txt
+          echo "KPM=none" >> AnyKernel3/control-info.txt
+          echo "XIAOMO_FUSE_PATCHES=none" >> AnyKernel3/control-info.txt
+
+      - name: Upload control package
+        uses: actions/upload-artifact@v7
+        with:
+          name: Xiaomi17ProMax_Kokuban61223_BOOT_CONTROL
+          path: |
+            AnyKernel3/*
+            control.config
+            control.vmlinux.symvers
+          retention-days: 7
+          compression-level: 9
