@@ -11,6 +11,7 @@ on:
       - templates/anykernel_xiaomi17promax.sh
       - scripts/padpro_fuse_name_filter.py
       - scripts/padpro_fuse_readdir_guard.py
+      - scripts/xiaomi_6_12_fuse_stack_fix.py
       - patches/unicode_bypass_fix_6.1+.patch
       - patches/fuse_bpf_lookup_revalidate_6.1.patch
       - scripts/ksu_uapi_sync/**
@@ -173,7 +174,15 @@ jobs:
           grep -qF "if (*LEAF_STR(leaf) == '\\0')" fs/unicode/utf8-norm.c
 
           python3 "$GITHUB_WORKSPACE/scripts/padpro_fuse_name_filter.py" .
+          python3 "$GITHUB_WORKSPACE/scripts/xiaomi_6_12_fuse_stack_fix.py" .
           python3 "$GITHUB_WORKSPACE/scripts/padpro_fuse_readdir_guard.py" .
+
+          grep -qF 'char filtered_name[64];' fs/fuse/dir.c
+          grep -qF 'char filtered_name[64];' fs/fuse/fuse_i.h
+          if grep -qF 'char filtered_name[FUSE_NAME_MAX + 1];' fs/fuse/dir.c fs/fuse/fuse_i.h; then
+            echo "❌ 6.12 still contains oversized FUSE lookup scratch buffer"
+            exit 18
+          fi
 
           FUSE_PATCH="$GITHUB_WORKSPACE/patches/fuse_bpf_lookup_revalidate_6.1.patch"
           patch -p1 --dry-run --forward --fuzz=0 < "$FUSE_PATCH"
