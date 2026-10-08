@@ -89,7 +89,6 @@ jobs:
               "fs/fuse/dir.c",
               "fs/fuse/readdir.c",
               "fs/fuse/fuse_i.h",
-              "fs/fuse/backing.c",
               "arch/arm64/configs/gki_defconfig",
           ]
           headers = {
@@ -126,6 +125,8 @@ jobs:
 
               config = (root / "arch/arm64/configs/gki_defconfig").read_text()
               fuse_bpf = "CONFIG_FUSE_BPF=y" in config.splitlines()
+              if fuse_bpf:
+                  fetch("fs/fuse/backing.c", root)
 
               readdir_script = str(Path("scripts/padpro_fuse_readdir_guard.py").resolve())
               subprocess.run(["python3", readdir_script, str(root)], check=True, timeout=30)
