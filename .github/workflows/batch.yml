@@ -95,7 +95,7 @@ jobs:
           missing_historical = sorted(historical_configs - set(devices))
           if len(historical['models']) != 29 or missing_historical:
               raise SystemExit('Historical support matrix is incomplete: ' + ', '.join(missing_historical))
-          if len(devices) != len(set(devices)) or len(devices) != 58 or not set(pilots).issubset(devices):
+          if len(devices) != len(set(devices)) or len(devices) != 75 or not set(pilots).issubset(devices):
               raise SystemExit('Unexpected device matrix; no dispatch performed.')
           print(f'Historical support coverage: {len(historical_configs)}/29 configs present; total build configs={len(devices)}', flush=True)
           values = {key: value.get('default', '') for key, value in fields.items()}
