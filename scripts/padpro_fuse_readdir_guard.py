@@ -19,7 +19,7 @@ if "fuse_android_private_dir_readdir_denied" in text:
 text = replace_once(
     text,
     '#include <linux/highmem.h>\n',
-    '#include <linux/highmem.h>\n#include <linux/cred.h>\n#include <linux/uidgid.h>\n',
+    '#include <linux/highmem.h>\n#include <linux/cred.h>\n#include <linux/uidgid.h>\n#include <linux/nls.h>\n#include <linux/string.h>\n',
     "credential includes",
 )
 
@@ -30,18 +30,67 @@ helper = r'''
  * governed by the normal MediaProvider/FUSE policy.
  *
  * This guard intentionally lives above both FUSE-BPF and userspace readdir
- * paths, so it also covers ROMs where fuse-bpf is compiled in but not active.
- * Component matching strips Unicode Default_Ignorable_Code_Point values with
- * the same helper used by the Pad Pro lookup hardening, then compares ASCII
- * case-insensitively.
+ * paths, so it also covers older OnePlus kernels without CONFIG_FUSE_BPF.
  */
+static bool fuse_readdir_default_ignorable(unicode_t ch)
+{
+	return ch == 0x00ad ||
+	       ch == 0x034f ||
+	       ch == 0x061c ||
+	       (ch >= 0x115f && ch <= 0x1160) ||
+	       (ch >= 0x17b4 && ch <= 0x17b5) ||
+	       (ch >= 0x180b && ch <= 0x180e) ||
+	       (ch >= 0x200b && ch <= 0x200f) ||
+	       (ch >= 0x202a && ch <= 0x202e) ||
+	       (ch >= 0x2060 && ch <= 0x206f) ||
+	       ch == 0x3164 ||
+	       (ch >= 0xfe00 && ch <= 0xfe0f) ||
+	       ch == 0xfeff ||
+	       ch == 0xffa0 ||
+	       (ch >= 0xfff0 && ch <= 0xfff8) ||
+	       (ch >= 0x1bca0 && ch <= 0x1bca3) ||
+	       (ch >= 0x1d173 && ch <= 0x1d17a) ||
+	       (ch >= 0xe0000 && ch <= 0xe0fff);
+}
+
+static size_t fuse_readdir_filter_component(const char *src, size_t len,
+					    char *dst, size_t dst_size)
+{
+	size_t in = 0, out = 0;
+
+	if (!dst_size)
+		return 0;
+
+	while (in < len && out + 1 < dst_size) {
+		unicode_t ch;
+		int char_len;
+
+		char_len = utf8_to_utf32((const u8 *)src + in, len - in, &ch);
+		if (char_len < 0) {
+			dst[out++] = src[in++];
+			continue;
+		}
+
+		if (!fuse_readdir_default_ignorable(ch)) {
+			if (out + char_len >= dst_size)
+				break;
+			memcpy(dst + out, src + in, char_len);
+			out += char_len;
+		}
+		in += char_len;
+	}
+
+	dst[out] = '\0';
+	return out;
+}
+
 static bool fuse_component_eq_ascii(const struct qstr *q, const char *literal)
 {
 	char filtered[FUSE_NAME_MAX + 1];
 	size_t len;
 	size_t literal_len = strlen(literal);
 
-	len = fuse_filter_lookup_name(q->name, q->len, filtered, sizeof(filtered));
+	len = fuse_readdir_filter_component(q->name, q->len, filtered, sizeof(filtered));
 	return len == literal_len && !strncasecmp(filtered, literal, literal_len);
 }
 
@@ -90,4 +139,4 @@ text = replace_once(
 )
 
 TARGET.write_text(text)
-print("Pad Pro Android/data + Android/obb app-UID readdir guard applied")
+print("OnePlus Android/data + Android/obb app-UID readdir guard applied")
