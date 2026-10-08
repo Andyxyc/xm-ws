@@ -187,4 +187,4 @@ jobs:
             ${{ env.PORT_ZIP }}.sha256
             verify/config.txt
           retention-days: 7
-          compression-level: =
+          compression-level: 9
