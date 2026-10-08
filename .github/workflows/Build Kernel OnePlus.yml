@@ -1030,6 +1030,46 @@ jobs:
           source "$REJ_CHECKER"
           check_rejects .
 
+      - name: Apply Pad Pro FUSE default-ignorable lookup filter
+        if: ${{ github.event.inputs.UNICODE_BYPASS == 'true' && (github.event.inputs.FILE == 'oneplus_pad_pro_b' || github.event.inputs.FILE == 'oneplus_pad_pro_v') }}
+        run: |
+          set -euo pipefail
+          PATCH_DIR="${GITHUB_WORKSPACE}/kernel_workspace/Action-Build/patches"
+          PATCH_FILE="${PATCH_DIR}/fuse_default_ignorable_lookup_6.1.patch"
+          cd kernel_workspace/kernel_platform/common
+
+          if [ "${VERSIONLEVEL}" -ne 6 ] || [ "${PATCHLEVEL}" -ne 1 ]; then
+            echo "❌ FUSE lookup-name filter is pinned to Linux 6.1; got ${VERSIONLEVEL}.${PATCHLEVEL}"
+            exit 1
+          fi
+          test -f "$PATCH_FILE"
+          test -f fs/fuse/dir.c
+          test -f fs/fuse/backing.c
+          test -f fs/fuse/fuse_i.h
+          grep -qF 'CONFIG_FUSE_BPF=y' arch/arm64/configs/gki_defconfig
+          grep -qF 'fuse_lookup_init(fm->fc, &args, nodeid, name, outarg, &bpf_arg.out);' fs/fuse/dir.c
+
+          patch -p1 --dry-run --forward --fuzz=0 < "$PATCH_FILE"
+          patch -p1 --forward --fuzz=0 < "$PATCH_FILE"
+
+          grep -qF 'fuse_default_ignorable_code_point' fs/fuse/dir.c
+          grep -qF 'fuse_filter_lookup_name' fs/fuse/dir.c
+          grep -qF 'struct qstr lookup_name = *name;' fs/fuse/dir.c
+          grep -qF 'filtered_name[FUSE_NAME_MAX + 1]' fs/fuse/fuse_i.h
+          grep -qF 'fli->filtered_name_len = fuse_filter_lookup_name' fs/fuse/backing.c
+          if grep -qF 'fuse_lookup_init(fm->fc, &args, nodeid, name, outarg, &bpf_arg.out);' fs/fuse/dir.c; then
+            echo "❌ raw lookup name is still sent to FuseDaemon"
+            exit 1
+          fi
+          git diff --check -- fs/fuse/dir.c fs/fuse/backing.c fs/fuse/fuse_i.h
+
+          echo "XIAOMO_FUSE_NAME_FILTER_STATUS=default_ignorable_filtered" >> "$GITHUB_ENV"
+          echo "XIAOMO_FUSE_NAME_FILTER_SOURCE=FuseFixer-compatible kernel-side lookup normalization" >> "$GITHUB_ENV"
+          echo "✅ FUSE lookup names now strip Default_Ignorable_Code_Point before FuseDaemon/BPF policy"
+
+          source "$REJ_CHECKER"
+          check_rejects .
+
       - name: Apply Pad Pro FUSE-BPF lookup revalidation
         if: ${{ github.event.inputs.UNICODE_BYPASS == 'true' && (github.event.inputs.FILE == 'oneplus_pad_pro_b' || github.event.inputs.FILE == 'oneplus_pad_pro_v') }}
         run: |
@@ -1069,7 +1109,7 @@ jobs:
           git diff --check -- fs/fuse/backing.c fs/fuse/dir.c fs/fuse/fuse_i.h
 
           echo "XIAOMO_FUSE_BPF_STATUS=lookup_revalidate" >> "$GITHUB_ENV"
-          echo "XIAOMO_FUSE_BPF_DISPLAY=lookup revalidate" >> "$GITHUB_ENV"
+          echo "XIAOMO_FUSE_BPF_DISPLAY=name filter + lookup revalidate" >> "$GITHUB_ENV"
           echo "XIAOMO_FUSE_BPF_SOURCE=Android kernel/common Gerrit 3943780" >> "$GITHUB_ENV"
           echo "✅ Pad Pro FUSE-BPF lookup revalidation patch applied with exact context"
 
@@ -1701,6 +1741,8 @@ jobs:
           {
             echo "UNICODE_STATUS=${XIAOMO_UNICODE_STATUS:-disabled}"
             echo "UNICODE_SOURCE=${XIAOMO_UNICODE_SOURCE:-none}"
+            echo "FUSE_NAME_FILTER_STATUS=${XIAOMO_FUSE_NAME_FILTER_STATUS:-disabled}"
+            echo "FUSE_NAME_FILTER_SOURCE=${XIAOMO_FUSE_NAME_FILTER_SOURCE:-none}"
             echo "FUSE_BPF_STATUS=${XIAOMO_FUSE_BPF_STATUS:-disabled}"
             echo "FUSE_BPF_SOURCE=${XIAOMO_FUSE_BPF_SOURCE:-none}"
             echo "FUSE_BPF_CHANGE_ID=I35350e18ea15b706051dd40a8bae363529a73426"
