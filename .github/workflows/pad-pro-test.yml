@@ -104,21 +104,30 @@ jobs:
               if 'CONFIG_FUSE_BPF=y' not in config.splitlines():
                   raise SystemExit('Pad Pro source does not have CONFIG_FUSE_BPF=y')
 
-              patch = str(Path('patches/fuse_bpf_lookup_revalidate_6.1.patch').resolve())
-              subprocess.run(
-                  ['patch', '-p1', '--batch', '--forward', '--fuzz=0', '--dry-run', '-i', patch],
-                  cwd=root, check=True, timeout=30
+              patch_paths = (
+                  'patches/fuse_default_ignorable_lookup_6.1.patch',
+                  'patches/fuse_bpf_lookup_revalidate_6.1.patch',
               )
-              subprocess.run(
-                  ['patch', '-p1', '--batch', '--forward', '--fuzz=0', '-i', patch],
-                  cwd=root, check=True, timeout=30
-              )
+              for patch_path in patch_paths:
+                  patch = str(Path(patch_path).resolve())
+                  subprocess.run(
+                      ['patch', '-p1', '--batch', '--forward', '--fuzz=0', '--dry-run', '-i', patch],
+                      cwd=root, check=True, timeout=30
+                  )
+                  subprocess.run(
+                      ['patch', '-p1', '--batch', '--forward', '--fuzz=0', '-i', patch],
+                      cwd=root, check=True, timeout=30
+                  )
 
               backing = (root / 'fs/fuse/backing.c').read_text()
               directory = (root / 'fs/fuse/dir.c').read_text()
               header = (root / 'fs/fuse/fuse_i.h').read_text()
               checks = {
                   'config_fuse_bpf': 'CONFIG_FUSE_BPF=y' in config,
+                  'name_filter_helper': 'fuse_default_ignorable_code_point' in directory and 'fuse_filter_lookup_name' in directory,
+                  'daemon_lookup_filtered': 'fuse_lookup_init(fm->fc, &args, nodeid, &lookup_name' in directory,
+                  'bpf_lookup_filtered': 'fli->filtered_name_len = fuse_filter_lookup_name' in backing,
+                  'lookup_io_buffer': 'filtered_name[FUSE_NAME_MAX + 1]' in header,
                   'initialize': 'fuse_lookup_revalidate_initialize' in backing and 'fuse_lookup_revalidate_initialize' in header,
                   'backing': 'fuse_lookup_revalidate_backing' in backing and 'fuse_lookup_revalidate_backing' in header,
                   'finalize': 'fuse_lookup_revalidate_finalize' in backing and 'fuse_lookup_revalidate_finalize' in header,
@@ -132,6 +141,8 @@ jobs:
               Path('receipts/fuse-bpf-source-checks.json').write_text(json.dumps({
                   'source': owner_repo,
                   'ref': ref,
+                  'name_filter_patch': 'fuse_default_ignorable_lookup_6.1.patch',
+                  'name_filter_basis': 'FuseFixer Default_Ignorable_Code_Point normalization, moved kernel-side before FuseDaemon policy',
                   'gerrit_change': 3943780,
                   'change_id': 'I35350e18ea15b706051dd40a8bae363529a73426',
                   'upstream_status': 'abandoned',
