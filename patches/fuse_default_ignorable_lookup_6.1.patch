@@ -1,0 +1,169 @@
+diff --git a/fs/fuse/dir.c b/fs/fuse/dir.c
+index ba0d20a57d4a..4c4a00000000 100644
+--- a/fs/fuse/dir.c
++++ b/fs/fuse/dir.c
+@@ -20,6 +20,7 @@
+ #include <linux/iversion.h>
+ #include <linux/posix_acl.h>
+ #include <linux/security.h>
++#include <linux/nls.h>
+ #include <linux/types.h>
+ #include <linux/kernel.h>
+ 
+@@ -29,6 +30,77 @@ MODULE_PARM_DESC(allow_sys_admin_access,
+ 
+ #include "../internal.h"
+ 
++/*
++ * MediaProvider's FUSE daemon historically compares path components without
++ * removing Unicode Default_Ignorable_Code_Point values, while the backing
++ * casefold filesystem does.  That mismatch lets a raw FUSE lookup and the
++ * backing lookup disagree about names such as Android/data and Android/obb.
++ *
++ * Keep the VFS dentry name untouched, but send a filtered component to the
++ * FUSE daemon / FUSE-BPF policy path so userspace sees the same logical name
++ * that the casefold backing filesystem resolves.
++ */
++static bool fuse_default_ignorable_code_point(unicode_t ch)
++{
++	return ch == 0x00ad ||
++	       ch == 0x034f ||
++	       ch == 0x061c ||
++	       (ch >= 0x115f && ch <= 0x1160) ||
++	       (ch >= 0x17b4 && ch <= 0x17b5) ||
++	       (ch >= 0x180b && ch <= 0x180e) ||
++	       (ch >= 0x200b && ch <= 0x200f) ||
++	       (ch >= 0x202a && ch <= 0x202e) ||
++	       (ch >= 0x2060 && ch <= 0x206f) ||
++	       ch == 0x3164 ||
++	       (ch >= 0xfe00 && ch <= 0xfe0f) ||
++	       ch == 0xfeff ||
++	       ch == 0xffa0 ||
++	       (ch >= 0xfff0 && ch <= 0xfff8) ||
++	       (ch >= 0x1bca0 && ch <= 0x1bca3) ||
++	       (ch >= 0x1d173 && ch <= 0x1d17a) ||
++	       (ch >= 0xe0000 && ch <= 0xe0fff);
++}
++
++size_t fuse_filter_lookup_name(const char *src, size_t len,
++			       char *dst, size_t dst_size)
++{
++	size_t in = 0, out = 0;
++
++	if (!dst_size)
++		return 0;
++
++	while (in < len && out + 1 < dst_size) {
++		unicode_t ch;
++		int char_len;
++
++		char_len = utf8_to_utf32((const u8 *)src + in, len - in, &ch);
++		if (char_len < 0) {
++			/* Preserve invalid UTF-8 byte-for-byte instead of rewriting it. */
++			dst[out++] = src[in++];
++			continue;
++		}
++
++		if (!fuse_default_ignorable_code_point(ch)) {
++			if (out + char_len >= dst_size)
++				break;
++			memcpy(dst + out, src + in, char_len);
++			out += char_len;
++		}
++		in += char_len;
++	}
++
++	dst[out] = '\0';
++	return out;
++}
++
+ static void fuse_advise_use_readdirplus(struct inode *dir)
+ {
+ 	struct fuse_inode *fi = get_fuse_inode(dir);
+@@ -254,6 +326,8 @@ static int fuse_dentry_revalidate(struct dentry *entry, unsigned int flags)
+ 		struct fuse_forget_link *forget;
+ 		u64 attr_version;
++		char filtered_name[FUSE_NAME_MAX + 1];
++		struct qstr lookup_name = entry->d_name;
+ 
+ 		/* For negative dentries, always do a fresh lookup */
+ 		if (!inode)
+@@ -296,8 +370,12 @@ static int fuse_dentry_revalidate(struct dentry *entry, unsigned int flags)
+ 
+ 		attr_version = fuse_get_attr_version(fm->fc);
+ 
++		lookup_name.len = fuse_filter_lookup_name(entry->d_name.name,
++				entry->d_name.len, filtered_name, sizeof(filtered_name));
++		lookup_name.name = filtered_name;
++
+ 		fuse_lookup_init(fm->fc, &args, get_node_id(d_inode(parent)),
+-				 &entry->d_name, &outarg, &bpf_arg.out);
++				 &lookup_name, &outarg, &bpf_arg.out);
+ 		ret = fuse_simple_request(fm, &args);
+ 		dput(parent);
+ 
+@@ -500,6 +578,8 @@ int fuse_lookup_name(struct super_block *sb, u64 nodeid, const struct qstr *name,
+ 	struct fuse_forget_link *forget;
+ 	u64 attr_version;
+ 	int err;
++	char filtered_name[FUSE_NAME_MAX + 1];
++	struct qstr lookup_name = *name;
+ 
+ 	*inode = NULL;
+ 	err = -ENAMETOOLONG;
+@@ -514,7 +594,11 @@ int fuse_lookup_name(struct super_block *sb, u64 nodeid, const struct qstr *name,
+ 
+ 	attr_version = fuse_get_attr_version(fm->fc);
+ 
+-	fuse_lookup_init(fm->fc, &args, nodeid, name, outarg, &bpf_arg.out);
++	lookup_name.len = fuse_filter_lookup_name(name->name, name->len,
++			filtered_name, sizeof(filtered_name));
++	lookup_name.name = filtered_name;
++
++	fuse_lookup_init(fm->fc, &args, nodeid, &lookup_name, outarg, &bpf_arg.out);
+ 	err = fuse_simple_request(fm, &args);
+ 
+ #ifdef CONFIG_FUSE_BPF
+diff --git a/fs/fuse/fuse_i.h b/fs/fuse/fuse_i.h
+index e4359233ddb5..5c5a00000000 100644
+--- a/fs/fuse/fuse_i.h
++++ b/fs/fuse/fuse_i.h
+@@ -1693,9 +1693,14 @@ void *fuse_file_fallocate_finalize(struct fuse_bpf_args *fa,
+ struct fuse_lookup_io {
+ 	struct fuse_entry_out feo;
+ 	struct fuse_entry_bpf feb;
++	char filtered_name[FUSE_NAME_MAX + 1];
++	size_t filtered_name_len;
+ };
+ 
++size_t fuse_filter_lookup_name(const char *src, size_t len,
++			       char *dst, size_t dst_size);
++
+ int fuse_handle_backing(struct fuse_entry_bpf *feb, struct inode **backing_inode,
+ 			struct path *backing_path);
+ int fuse_handle_bpf_prog(struct fuse_entry_bpf *feb, struct inode *parent,
+diff --git a/fs/fuse/backing.c b/fs/fuse/backing.c
+index 0bc637db568f..6c6a00000000 100644
+--- a/fs/fuse/backing.c
++++ b/fs/fuse/backing.c
+@@ -1090,6 +1090,10 @@ int fuse_lookup_initialize(struct fuse_bpf_args *fa, struct fuse_lookup_io *fli,
+ 	       struct inode *dir, struct dentry *entry, unsigned int flags)
+ {
++	fli->filtered_name_len = fuse_filter_lookup_name(entry->d_name.name,
++			entry->d_name.len, fli->filtered_name,
++			sizeof(fli->filtered_name));
++
+ 	*fa = (struct fuse_bpf_args) {
+ 		.nodeid = get_fuse_inode(dir)->nodeid,
+ 		.opcode = FUSE_LOOKUP,
+@@ -1097,8 +1101,8 @@ int fuse_lookup_initialize(struct fuse_bpf_args *fa, struct fuse_lookup_io *fli,
+ 		.out_numargs = 2,
+ 		.flags = FUSE_BPF_OUT_ARGVAR,
+ 		.in_args[0] = (struct fuse_bpf_in_arg) {
+-			.size = entry->d_name.len + 1,
+-			.value = entry->d_name.name,
++			.size = fli->filtered_name_len + 1,
++			.value = fli->filtered_name,
+ 		},
+ 		.out_args[0] = (struct fuse_bpf_arg) {
+ 			.size = sizeof(fli->feo),
