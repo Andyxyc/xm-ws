@@ -1,0 +1,180 @@
+name: OnePlus Storage Fix Matrix
+run-name: oneplus-storage-fix-matrix-${{ github.run_id }}
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [SukiSU-Ultra]
+    paths:
+      - .github/workflows/oneplus-storage-fix-matrix.yml
+      - scripts/padpro_fuse_name_filter.py
+      - scripts/padpro_fuse_readdir_guard.py
+      - patches/fuse_bpf_lookup_revalidate_6.1.patch
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: sm6375-6.1
+            repo: OnePlusOSS/android_kernel_common_oneplus_sm6375
+            ref: oneplus/sm6375_b_16.0.0_nord_ce4_lite_5g
+          - label: sm7550-5.15
+            repo: OnePlusOSS/android_kernel_common_oneplus_sm7550
+            ref: oneplus/sm7550_b_16.0.0_nord_ce4
+          - label: sm7635-6.1
+            repo: OnePlusOSS/android_kernel_common_oneplus_sm7635
+            ref: oneplus/sm7635_b_16.0.0_nord_ce6
+          - label: sm7675-6.1
+            repo: OnePlusOSS/android_kernel_common_oneplus_sm7675
+            ref: oneplus/sm7675_b_16.0.0_nord_4
+          - label: sm8450-5.10
+            repo: OnePlusOSS/android_kernel_common_oneplus_sm8450
+            ref: oneplus/sm8450_b_16.0_oneplus_10_pro
+          - label: sm8475-5.10
+            repo: OnePlusOSS/android_kernel_common_oneplus_sm8475
+            ref: oneplus/sm8475_v_15.0.0_oneplus_10t
+          - label: sm8550-5.15
+            repo: OnePlusOSS/android_kernel_common_oneplus_sm8550
+            ref: oneplus/sm8550_b_16.0.0_oneplus_11
+          - label: sm8635-6.1
+            repo: OnePlusOSS/android_kernel_common_oneplus_sm8635
+            ref: oneplus/sm8635_b_16.0.0_nord_5
+          - label: sm8650-6.1
+            repo: OnePlusOSS/android_kernel_common_oneplus_sm8650
+            ref: oneplus/sm8650_b_16.0.0_oneplus12
+          - label: sm8735-6.6
+            repo: OnePlusOSS/android_kernel_common_oneplus_sm8735
+            ref: oneplus/sm8735_b_16.0.0_nord_6
+          - label: sm8750-6.6
+            repo: OnePlusOSS/android_kernel_common_oneplus_sm8750
+            ref: oneplus/sm8750_b_16.0.0_oneplus_13
+          - label: sm8845-6.12
+            repo: OnePlusOSS/android_kernel_common_oneplus_sm8845
+            ref: oneplus/sm8845_b_16.0.0_oneplus_15r
+          - label: sm8850-6.12
+            repo: OnePlusOSS/android_kernel_common_oneplus_sm8850
+            ref: oneplus/sm8850_b_16.0.0_oneplus_15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Validate exact source
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SRC_REPO: ${{ matrix.repo }}
+          SRC_REF: ${{ matrix.ref }}
+          LABEL: ${{ matrix.label }}
+        shell: python
+        run: |
+          from pathlib import Path
+          import json
+          import os
+          import subprocess
+          import tempfile
+          import urllib.parse
+          import urllib.request
+
+          repo = os.environ["SRC_REPO"]
+          ref = os.environ["SRC_REF"]
+          label = os.environ["LABEL"]
+          files = [
+              "Makefile",
+              "fs/fuse/dir.c",
+              "fs/fuse/readdir.c",
+              "fs/fuse/fuse_i.h",
+              "fs/fuse/backing.c",
+              "arch/arm64/configs/gki_defconfig",
+          ]
+          headers = {
+              "Accept": "application/vnd.github.raw+json",
+              "Authorization": "Bearer " + os.environ["GH_TOKEN"],
+              "X-GitHub-Api-Version": "2022-11-28",
+          }
+
+          def fetch(path, root):
+              url = (
+                  "https://api.github.com/repos/" + repo + "/contents/" +
+                  urllib.parse.quote(path, safe="/") + "?ref=" +
+                  urllib.parse.quote(ref, safe="")
+              )
+              req = urllib.request.Request(url, headers=headers)
+              with urllib.request.urlopen(req, timeout=45) as response:
+                  data = response.read()
+              dst = root / path
+              dst.parent.mkdir(parents=True, exist_ok=True)
+              dst.write_bytes(data)
+
+          with tempfile.TemporaryDirectory() as temp:
+              root = Path(temp)
+              for path in files:
+                  fetch(path, root)
+
+              makefile = (root / "Makefile").read_text()
+              def make_value(key):
+                  for line in makefile.splitlines():
+                      if line.startswith(key + " ="):
+                          return line.split("=", 1)[1].strip()
+                  return "?"
+              version = ".".join([make_value("VERSION"), make_value("PATCHLEVEL"), make_value("SUBLEVEL")])
+
+              config = (root / "arch/arm64/configs/gki_defconfig").read_text()
+              fuse_bpf = "CONFIG_FUSE_BPF=y" in config.splitlines()
+
+              readdir_script = str(Path("scripts/padpro_fuse_readdir_guard.py").resolve())
+              subprocess.run(["python3", readdir_script, str(root)], check=True, timeout=30)
+
+              readdir = (root / "fs/fuse/readdir.c").read_text()
+              checks = {
+                  "readdir_guard": "fuse_android_private_dir_readdir_denied" in readdir,
+                  "readdir_app_uid_scope": "if (uid < 10000)" in readdir,
+                  "readdir_android": 'fuse_component_eq_ascii(&parent->d_name, "Android")' in readdir,
+                  "readdir_data": 'fuse_component_eq_ascii(&dentry->d_name, "data")' in readdir,
+                  "readdir_obb": 'fuse_component_eq_ascii(&dentry->d_name, "obb")' in readdir,
+                  "readdir_unicode_filter": "fuse_readdir_default_ignorable" in readdir,
+              }
+
+              if fuse_bpf:
+                  name_script = str(Path("scripts/padpro_fuse_name_filter.py").resolve())
+                  subprocess.run(["python3", name_script, str(root)], check=True, timeout=30)
+
+                  patch = str(Path("patches/fuse_bpf_lookup_revalidate_6.1.patch").resolve())
+                  subprocess.run(
+                      ["patch", "-p1", "--batch", "--forward", "--fuzz=0", "--dry-run", "-i", patch],
+                      cwd=root, check=True, timeout=30
+                  )
+                  subprocess.run(
+                      ["patch", "-p1", "--batch", "--forward", "--fuzz=0", "-i", patch],
+                      cwd=root, check=True, timeout=30
+                  )
+
+                  directory = (root / "fs/fuse/dir.c").read_text()
+                  backing = (root / "fs/fuse/backing.c").read_text()
+                  header = (root / "fs/fuse/fuse_i.h").read_text()
+                  checks.update({
+                      "name_filter": "fuse_default_ignorable_code_point" in directory,
+                      "daemon_lookup_filtered": "fuse_lookup_init(fm->fc, &args, nodeid, &lookup_name" in directory,
+                      "bpf_lookup_filtered": "fli->filtered_name_len = fuse_filter_lookup_name" in backing,
+                      "lookup_revalidate_initialize": "fuse_lookup_revalidate_initialize" in backing and "fuse_lookup_revalidate_initialize" in header,
+                      "lookup_revalidate_backing": "fuse_lookup_revalidate_backing" in backing and "fuse_lookup_revalidate_backing" in header,
+                      "lookup_revalidate_finalize": "fuse_lookup_revalidate_finalize" in backing and "fuse_lookup_revalidate_finalize" in header,
+                      "old_revalidate_skip_removed": "bpf based lookup_revalidate here." not in directory,
+                  })
+
+              if not all(checks.values()):
+                  raise SystemExit(label + " failed checks: " + json.dumps(checks, sort_keys=True))
+
+              print(json.dumps({
+                  "label": label,
+                  "repo": repo,
+                  "ref": ref,
+                  "kernel": version,
+                  "fuse_bpf": fuse_bpf,
+                  "checks": checks,
+              }, indent=2, sort_keys=True))
