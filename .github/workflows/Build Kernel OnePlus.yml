@@ -1073,22 +1073,25 @@ jobs:
           source "$REJ_CHECKER"
           check_rejects .
 
-      - name: Apply Pad Pro FUSE default-ignorable lookup filter
-        if: ${{ github.event.inputs.UNICODE_BYPASS == 'true' && (github.event.inputs.FILE == 'oneplus_pad_pro_b' || github.event.inputs.FILE == 'oneplus_pad_pro_v') }}
+      - name: Apply OnePlus FUSE default-ignorable lookup filter
+        if: ${{ github.event.inputs.UNICODE_BYPASS == 'true' && startsWith(github.event.inputs.FILE, 'oneplus_') && github.event.inputs.FILE != 'oneplus_13t_b' }}
         run: |
           set -euo pipefail
           APPLY_SCRIPT="${GITHUB_WORKSPACE}/kernel_workspace/Action-Build/scripts/padpro_fuse_name_filter.py"
           cd kernel_workspace/kernel_platform/common
 
-          if [ "${VERSIONLEVEL}" -ne 6 ] || [ "${PATCHLEVEL}" -ne 1 ]; then
-            echo "❌ FUSE lookup-name filter is pinned to Linux 6.1; got ${VERSIONLEVEL}.${PATCHLEVEL}"
-            exit 1
+          test -f arch/arm64/configs/gki_defconfig
+          if ! grep -qF 'CONFIG_FUSE_BPF=y' arch/arm64/configs/gki_defconfig; then
+            echo "XIAOMO_FUSE_NAME_FILTER_STATUS=not_applicable_no_fuse_bpf" >> "$GITHUB_ENV"
+            echo "XIAOMO_FUSE_NAME_FILTER_SOURCE=none" >> "$GITHUB_ENV"
+            echo "ℹ️ ${FILE}: CONFIG_FUSE_BPF is not enabled; lookup-name filter is not applicable"
+            exit 0
           fi
+
           test -f "$APPLY_SCRIPT"
           test -f fs/fuse/dir.c
           test -f fs/fuse/backing.c
           test -f fs/fuse/fuse_i.h
-          grep -qF 'CONFIG_FUSE_BPF=y' arch/arm64/configs/gki_defconfig
           grep -qF 'fuse_lookup_init(fm->fc, &args, nodeid, name, outarg, &bpf_arg.out);' fs/fuse/dir.c
 
           python3 "$APPLY_SCRIPT" .
@@ -1106,22 +1109,18 @@ jobs:
 
           echo "XIAOMO_FUSE_NAME_FILTER_STATUS=default_ignorable_filtered" >> "$GITHUB_ENV"
           echo "XIAOMO_FUSE_NAME_FILTER_SOURCE=FuseFixer-compatible kernel-side lookup normalization" >> "$GITHUB_ENV"
-          echo "✅ FUSE lookup names now strip Default_Ignorable_Code_Point before FuseDaemon/BPF policy"
+          echo "✅ ${FILE}: FUSE lookup names strip Default_Ignorable_Code_Point before FuseDaemon/BPF policy"
 
           source "$REJ_CHECKER"
           check_rejects .
 
-      - name: Apply Pad Pro Android data-obb readdir guard
-        if: ${{ github.event.inputs.UNICODE_BYPASS == 'true' && (github.event.inputs.FILE == 'oneplus_pad_pro_b' || github.event.inputs.FILE == 'oneplus_pad_pro_v') }}
+      - name: Apply OnePlus Android data-obb readdir guard
+        if: ${{ github.event.inputs.UNICODE_BYPASS == 'true' && startsWith(github.event.inputs.FILE, 'oneplus_') && github.event.inputs.FILE != 'oneplus_13t_b' }}
         run: |
           set -euo pipefail
           APPLY_SCRIPT="${GITHUB_WORKSPACE}/kernel_workspace/Action-Build/scripts/padpro_fuse_readdir_guard.py"
           cd kernel_workspace/kernel_platform/common
 
-          if [ "${VERSIONLEVEL}" -ne 6 ] || [ "${PATCHLEVEL}" -ne 1 ]; then
-            echo "❌ Android/data readdir guard is pinned to Linux 6.1; got ${VERSIONLEVEL}.${PATCHLEVEL}"
-            exit 1
-          fi
           test -f "$APPLY_SCRIPT"
           test -f fs/fuse/readdir.c
           grep -qF 'int fuse_readdir(struct file *file, struct dir_context *ctx)' fs/fuse/readdir.c
@@ -1129,6 +1128,7 @@ jobs:
           python3 "$APPLY_SCRIPT" .
 
           grep -qF 'fuse_android_private_dir_readdir_denied' fs/fuse/readdir.c
+          grep -qF 'fuse_readdir_default_ignorable' fs/fuse/readdir.c
           grep -qF 'return -EACCES;' fs/fuse/readdir.c
           grep -qF 'fuse_component_eq_ascii(&parent->d_name, "Android")' fs/fuse/readdir.c
           grep -qF 'fuse_component_eq_ascii(&dentry->d_name, "data")' fs/fuse/readdir.c
@@ -1138,34 +1138,37 @@ jobs:
 
           echo "XIAOMO_FUSE_READDIR_GUARD_STATUS=android_data_obb_appuid_denied" >> "$GITHUB_ENV"
           echo "XIAOMO_FUSE_READDIR_GUARD_SOURCE=DuckDetector SharedStorageProbes + KernelCvePatchProbe behavior" >> "$GITHUB_ENV"
-          echo "✅ Android app UIDs can no longer enumerate Android/data or Android/obb through FUSE readdir"
+          echo "✅ ${FILE}: Android app UIDs cannot enumerate Android/data or Android/obb through FUSE readdir"
 
           source "$REJ_CHECKER"
           check_rejects .
 
-      - name: Apply Pad Pro FUSE-BPF lookup revalidation
-        if: ${{ github.event.inputs.UNICODE_BYPASS == 'true' && (github.event.inputs.FILE == 'oneplus_pad_pro_b' || github.event.inputs.FILE == 'oneplus_pad_pro_v') }}
+      - name: Apply OnePlus FUSE-BPF lookup revalidation
+        if: ${{ github.event.inputs.UNICODE_BYPASS == 'true' && startsWith(github.event.inputs.FILE, 'oneplus_') && github.event.inputs.FILE != 'oneplus_13t_b' }}
         run: |
           set -euo pipefail
           PATCH_DIR="${GITHUB_WORKSPACE}/kernel_workspace/Action-Build/patches"
           PATCH_FILE="${PATCH_DIR}/fuse_bpf_lookup_revalidate_6.1.patch"
           cd kernel_workspace/kernel_platform/common
 
-          if [ "${VERSIONLEVEL}" -ne 6 ] || [ "${PATCHLEVEL}" -ne 1 ]; then
-            echo "❌ FUSE-BPF lookup revalidation patch is pinned to Linux 6.1; got ${VERSIONLEVEL}.${PATCHLEVEL}"
-            exit 1
+          test -f arch/arm64/configs/gki_defconfig
+          if ! grep -qF 'CONFIG_FUSE_BPF=y' arch/arm64/configs/gki_defconfig; then
+            echo "XIAOMO_FUSE_BPF_STATUS=not_applicable_no_fuse_bpf" >> "$GITHUB_ENV"
+            echo "XIAOMO_FUSE_BPF_DISPLAY=readdir guard (no FUSE-BPF)" >> "$GITHUB_ENV"
+            echo "XIAOMO_FUSE_BPF_SOURCE=none" >> "$GITHUB_ENV"
+            echo "ℹ️ ${FILE}: CONFIG_FUSE_BPF is not enabled; revalidation patch is not applicable"
+            exit 0
           fi
+
           test -f "$PATCH_FILE"
           test -f fs/fuse/backing.c
           test -f fs/fuse/dir.c
           test -f fs/fuse/fuse_i.h
-          grep -qF 'CONFIG_FUSE_BPF=y' arch/arm64/configs/gki_defconfig
           grep -qF 'bpf based lookup_revalidate here.' fs/fuse/dir.c
 
-          # Android kernel/common Gerrit 3943780, Change-Id
-          # I35350e18ea15b706051dd40a8bae363529a73426.
-          # This proposal is abandoned/unmerged upstream. Keep it Pad Pro 6.1
-          # scoped and require exact-context application instead of fuzzy patching.
+          # Android kernel/common Gerrit 3943780 / I35350e18ea15b706051dd40a8bae363529a73426.
+          # The proposal is abandoned upstream, but its exact source shape was validated against
+          # the supported OnePlus 5.15/6.1/6.6/6.12 Snapdragon and MediaTek kernel families.
           patch -p1 --dry-run --forward --fuzz=0 < "$PATCH_FILE"
           patch -p1 --forward --fuzz=0 < "$PATCH_FILE"
 
@@ -1184,10 +1187,11 @@ jobs:
           echo "XIAOMO_FUSE_BPF_STATUS=lookup_revalidate" >> "$GITHUB_ENV"
           echo "XIAOMO_FUSE_BPF_DISPLAY=readdir guard + name filter + lookup revalidate" >> "$GITHUB_ENV"
           echo "XIAOMO_FUSE_BPF_SOURCE=Android kernel/common Gerrit 3943780" >> "$GITHUB_ENV"
-          echo "✅ Pad Pro FUSE-BPF lookup revalidation patch applied with exact context"
+          echo "✅ ${FILE}: FUSE-BPF lookup revalidation patch applied with exact context"
 
           source "$REJ_CHECKER"
           check_rejects .
+
       - name: Apply RE_KERNEL
         if: ${{ github.event.inputs.RE_KERNEL == 'true' }}
         run: |
