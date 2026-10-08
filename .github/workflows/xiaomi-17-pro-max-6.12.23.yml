@@ -1,6 +1,6 @@
-name: Xiaomi 17 Pro Max 6.12.23
+name: Xiaomi 17 Pro Max Kokuban 6.12.23
 
-run-name: Xiaomi17ProMax-6.12.23-${{ github.run_id }}
+run-name: Xiaomi17ProMax-Kokuban61223-${{ github.run_id }}
 
 on:
   workflow_dispatch:
@@ -12,6 +12,7 @@ on:
       - scripts/padpro_fuse_name_filter.py
       - scripts/padpro_fuse_readdir_guard.py
       - scripts/xiaomi_6_12_fuse_stack_fix.py
+      - scripts/fuse_revalidate_stack_split.py
       - patches/unicode_bypass_fix_6.1+.patch
       - patches/fuse_bpf_lookup_revalidate_6.1.patch
       - scripts/ksu_uapi_sync/**
@@ -22,7 +23,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: xiaomi17promax-6.12.23
+  group: xiaomi17promax-kokuban-6.12.23
   cancel-in-progress: false
 
 env:
@@ -32,17 +33,25 @@ env:
   ANDROID_VERSION: android16
   KERNEL_VERSION: "6.12"
   KERNEL_BASE: "6.12.23"
-  KMI: android16-6.12
-  ACK_TAG: android16-6.12-2025-06_r8
-  ACK_SHA: f1bdb13583da85a47fcf1632a78ef52d6e6da651
+
+  # Xiaomi 17 系列专用、且有公开 6.12.23 实际发布记录的 Kokuban 基线。
+  MI17_BASE_REPO: YuzakiKokuban/android_kernel_xiaomi_sm8850
+  MI17_BASE_SHA: 3b4e958c4ea606d089c009503142521f183ae1dd
+  MI17_BASE_RELEASE: Mi17_Kernel-LKM-20260708-2131
+  MI17_BASE_RELEASE_SHA256: f57c8a26920d426e3c24879c31680d2f9974be15fb66d15f9cca7140a7fc9240
+  MI17_BASE_SHORT: 3b4e958c4ea6
+
+  # 仅用于 SUSFS 运行时伪装；不再拿这个字符串冒充源码身份。
   STOCK_UNAME: 6.12.23-android16-5-g75e9b1c7ae7c-abogki463945075-4k
+
   KSU_PIN: 70fa0e092a2c81060823f8ae526eac14fdda2930
   KSUVER: "40959"
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 55
+    timeout-minutes: 60
+
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -56,21 +65,35 @@ jobs:
             dwarves ccache zstd unzip zip rsync python3 git curl
           df -h
 
-      - name: Fetch Xiaomi-matched ACK source and toolchains
+      - name: Fetch proven Xiaomi 17 6.12.23 base and toolchains
         run: |
           set -euo pipefail
           mkdir -p kernel_workspace/kernel_platform
           cd kernel_workspace/kernel_platform
 
           git init common
-          git -C common remote add origin https://github.com/aosp-mirror/kernel_common.git
-          git -C common fetch --depth=1 origin "$ACK_SHA"
+          git -C common remote add origin "https://github.com/${MI17_BASE_REPO}.git"
+          git -C common fetch --depth=1 origin "$MI17_BASE_SHA"
           git -C common checkout --detach FETCH_HEAD
-          test "$(git -C common rev-parse HEAD)" = "$ACK_SHA"
+
+          ACTUAL_SHA="$(git -C common rev-parse HEAD)"
+          [ "$ACTUAL_SHA" = "$MI17_BASE_SHA" ] || {
+            echo "❌ Kokuban base SHA mismatch: $ACTUAL_SHA"
+            exit 10
+          }
 
           VER="$(awk '/^VERSION =/ {v=$3} /^PATCHLEVEL =/ {p=$3} /^SUBLEVEL =/ {s=$3} END {print v"."p"."s}' common/Makefile)"
-          [ "$VER" = "$KERNEL_BASE" ] || { echo "❌ ACK version mismatch: $VER"; exit 10; }
+          [ "$VER" = "$KERNEL_BASE" ] || {
+            echo "❌ Kokuban base is not 6.12.23: $VER"
+            exit 11
+          }
+
+          grep -q '^KMI_GENERATION=5$' common/build.config.constants
+          grep -q '^CLANG_VERSION=r536225$' common/build.config.constants
           grep -q '^CONFIG_FUSE_BPF=y$' common/arch/arm64/configs/gki_defconfig
+          grep -q '^CONFIG_MODVERSIONS=y$' common/arch/arm64/configs/gki_defconfig
+          grep -q '^CONFIG_LTO_NONE=y$' common/arch/arm64/configs/gki_defconfig
+          grep -q '^CONFIG_KPM=y$' common/arch/arm64/configs/gki_defconfig
 
           mkdir -p clang19 rust
           aria2c -q -s16 -x16 -k1M \
@@ -91,14 +114,21 @@ jobs:
           unzip -q build-tools.zip
           rm -f build-tools.zip
 
-          echo "✅ Xiaomi ACK source pinned: $ACK_SHA ($ACK_TAG)"
+          echo "✅ Dedicated Xiaomi 17 base: $MI17_BASE_REPO@$MI17_BASE_SHA"
+          echo "✅ Historical public release: $MI17_BASE_RELEASE"
+          echo "✅ Historical release SHA-256: $MI17_BASE_RELEASE_SHA256"
           ./clang19/bin/clang --version | head -n1
 
       - name: Add SukiSU Ultra 40959
         run: |
           set -euo pipefail
           cd kernel_workspace/kernel_platform
+
+          # main/LKM 基线不带 KernelSU 源码；在这份已发布可启动的 Xiaomi 17 树上注入固定 SukiSU。
+          rm -rf KernelSU
+          rm -f common/drivers/kernelsu
           curl -fLSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/$KSU_PIN/kernel/setup.sh" | bash -s builtin
+
           cd KernelSU
           git fetch origin "$KSU_PIN" --depth=1
           git checkout --detach "$KSU_PIN"
@@ -116,36 +146,43 @@ jobs:
         run: |
           set -euo pipefail
           cd kernel_workspace/kernel_platform
+
           UAPI_FILE=""
           for f in KernelSU/kernel/include/uapi/supercall.h KernelSU/uapi/supercall.h; do
             [ -f "$f" ] && { UAPI_FILE="$f"; break; }
           done
-          [ -n "$UAPI_FILE" ] || { echo "❌ supercall.h not found"; exit 11; }
+          [ -n "$UAPI_FILE" ] || { echo "❌ supercall.h not found"; exit 12; }
 
           read_uapi() {
             grep -ohE 'KERNEL_SU_UAPI_VERSION[^0-9]*[0-9]+' "$UAPI_FILE" | grep -oE '[0-9]+' | tail -n1
           }
+
           CURRENT_UAPI="$(read_uapi)"
           if [ "${CURRENT_UAPI:-0}" -lt 5 ]; then
             patch -p1 --forward -d KernelSU < "$GITHUB_WORKSPACE/scripts/ksu_uapi_sync/builtin-uapi5.patch"
           fi
-          [ "$(read_uapi)" = "5" ] || { echo "❌ UAPI 5 sync failed"; exit 12; }
+          [ "$(read_uapi)" = "5" ] || { echo "❌ UAPI 5 sync failed"; exit 13; }
           bash "$GITHUB_WORKSPACE/scripts/sukisu_compat/apply.sh" KernelSU
           echo "✅ SukiSU UAPI/compat ready"
 
-      - name: Apply SUSFS 2.3.0
+      - name: Apply SUSFS 2.3.0 on Kokuban base
         run: |
           set -euo pipefail
           cd kernel_workspace
+
           for n in 1 2 3; do
             rm -rf susfs4ksu
             git -c http.version=HTTP/1.1 clone --depth=1 -b gki-android16-6.12 \
               https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu && break
-            [ "$n" = 3 ] && exit 13
-            sleep $((n*5))
+            [ "$n" = 3 ] && exit 14
+            sleep $((n * 5))
           done
+
           SUSFS_VERSION="$(awk -F= '$1=="version" {print $2}' susfs4ksu/ksu_module_susfs/module.prop | head -n1)"
-          case "$SUSFS_VERSION" in v2.3.0*|2.3.0*) ;; *) echo "❌ SUSFS version: $SUSFS_VERSION"; exit 14 ;; esac
+          case "$SUSFS_VERSION" in
+            v2.3.0*|2.3.0*) ;;
+            *) echo "❌ SUSFS version: $SUSFS_VERSION"; exit 15 ;;
+          esac
 
           git clone --depth=1 https://github.com/ShirkNeko/SukiSU_patch.git SukiSU_patch
 
@@ -156,22 +193,36 @@ jobs:
           cd kernel_platform/common
           patch -p1 --dry-run -F 3 < 50_add_susfs_in_gki-android16-6.12.patch
           patch -p1 -F 3 < 50_add_susfs_in_gki-android16-6.12.patch
+
           if find . -name '*.rej' -print -quit | grep -q .; then
-            echo "❌ SUSFS patch generated reject files"
+            echo "❌ SUSFS generated reject files"
             find . -name '*.rej' -print
-            exit 15
+            exit 16
           fi
-          echo "✅ SUSFS $SUSFS_VERSION applied"
+
+          echo "SUSFS_VERSION=$SUSFS_VERSION" >> "$GITHUB_ENV"
+          echo "✅ SUSFS $SUSFS_VERSION applied to dedicated Xiaomi base"
 
       - name: Apply Unicode and FUSE storage fixes
         run: |
           set -euo pipefail
           cd kernel_workspace/kernel_platform/common
 
-          UNICODE_PATCH="$GITHUB_WORKSPACE/patches/unicode_bypass_fix_6.1+.patch"
-          patch -p1 --dry-run --forward --fuzz=0 < "$UNICODE_PATCH"
-          patch -p1 --forward --fuzz=0 < "$UNICODE_PATCH"
-          grep -qF "if (*LEAF_STR(leaf) == '\\0')" fs/unicode/utf8-norm.c
+          # Kokuban 6.12.23 already carries the empty-decomposition STOPPER fix.
+          # If a future pinned base loses it, fall back to our runtime Unicode patch.
+          if grep -A8 -F 'Empty decomposition implies CCC 0.' fs/unicode/utf8-norm.c | grep -qF 'ccc = STOPPER;'; then
+            echo "XIAOMO_UNICODE_STATUS=already_present" >> "$GITHUB_ENV"
+            echo "XIAOMO_UNICODE_DISPLAY=Kokuban 6.12.23 已内置" >> "$GITHUB_ENV"
+            echo "XIAOMO_UNICODE_SOURCE=Kokuban Xiaomi17 base" >> "$GITHUB_ENV"
+            echo "✅ Unicode STOPPER fix already present in Kokuban base"
+          else
+            UNICODE_PATCH="$GITHUB_WORKSPACE/patches/unicode_bypass_fix_6.1+.patch"
+            patch -p1 --dry-run --forward --fuzz=0 < "$UNICODE_PATCH"
+            patch -p1 --forward --fuzz=0 < "$UNICODE_PATCH"
+            echo "XIAOMO_UNICODE_STATUS=runtime_utf8_norm" >> "$GITHUB_ENV"
+            echo "XIAOMO_UNICODE_DISPLAY=runtime utf8-norm" >> "$GITHUB_ENV"
+            echo "XIAOMO_UNICODE_SOURCE=WildKernels 6.1+ runtime normalization fix" >> "$GITHUB_ENV"
+          fi
 
           python3 "$GITHUB_WORKSPACE/scripts/padpro_fuse_name_filter.py" .
           python3 "$GITHUB_WORKSPACE/scripts/xiaomi_6_12_fuse_stack_fix.py" .
@@ -180,8 +231,8 @@ jobs:
           grep -qF 'char filtered_name[64];' fs/fuse/dir.c
           grep -qF 'char filtered_name[64];' fs/fuse/fuse_i.h
           if grep -qF 'char filtered_name[FUSE_NAME_MAX + 1];' fs/fuse/dir.c fs/fuse/fuse_i.h; then
-            echo "❌ 6.12 still contains oversized FUSE lookup scratch buffer"
-            exit 18
+            echo "❌ oversized FUSE lookup stack buffer remains"
+            exit 17
           fi
 
           FUSE_PATCH="$GITHUB_WORKSPACE/patches/fuse_bpf_lookup_revalidate_6.1.patch"
@@ -193,13 +244,11 @@ jobs:
           grep -qF 'fuse_bpf_lookup_revalidate_run' fs/fuse/dir.c
           grep -qF 'fuse_android_private_dir_readdir_denied' fs/fuse/readdir.c
           grep -qF 'fuse_lookup_revalidate_initialize' fs/fuse/backing.c
-          # SUSFS touches unrelated files that carry upstream whitespace.
-          # Validate only the storage-fix files we own in this step.
-          git diff --check -- fs/unicode/utf8-norm.c fs/fuse/dir.c fs/fuse/readdir.c fs/fuse/backing.c fs/fuse/fuse_i.h
 
-          echo "XIAOMO_UNICODE_STATUS=runtime_utf8_norm" >> "$GITHUB_ENV"
-          echo "XIAOMO_UNICODE_DISPLAY=runtime utf8-norm" >> "$GITHUB_ENV"
-          echo "XIAOMO_UNICODE_SOURCE=WildKernels 6.1+ runtime normalization fix" >> "$GITHUB_ENV"
+          git diff --check -- \
+            fs/unicode/utf8-norm.c fs/fuse/dir.c fs/fuse/readdir.c \
+            fs/fuse/backing.c fs/fuse/fuse_i.h
+
           echo "XIAOMO_FUSE_NAME_FILTER_STATUS=default_ignorable_filtered" >> "$GITHUB_ENV"
           echo "XIAOMO_FUSE_NAME_FILTER_SOURCE=kernel-side MediaProvider/FUSE lookup normalization" >> "$GITHUB_ENV"
           echo "XIAOMO_FUSE_READDIR_GUARD_STATUS=android_data_obb_appuid_denied" >> "$GITHUB_ENV"
@@ -207,43 +256,38 @@ jobs:
           echo "XIAOMO_FUSE_BPF_STATUS=lookup_revalidate" >> "$GITHUB_ENV"
           echo "XIAOMO_FUSE_BPF_DISPLAY=readdir guard + name filter + lookup revalidate" >> "$GITHUB_ENV"
           echo "XIAOMO_FUSE_BPF_SOURCE=Android kernel/common Gerrit 3943780" >> "$GITHUB_ENV"
-          echo "✅ Unicode + FUSE full storage fix applied"
+          echo "✅ Storage fixes applied on Xiaomi-specific 6.12.23 base"
 
-      - name: Configure kernel
+      - name: Configure Xiaomi 17 kernel without replacing its ABI profile
         run: |
           set -euo pipefail
-          DEF="kernel_workspace/kernel_platform/common/arch/arm64/configs/gki_defconfig"
+          ROOT="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform"
+          DEF="$ROOT/common/arch/arm64/configs/gki_defconfig"
+          LV="-android16-Kokuban-SilverWolf-SukiSUUltra-g${MI17_BASE_SHORT}-4k"
 
-          sed -i 's|^CONFIG_LOCALVERSION=.*|CONFIG_LOCALVERSION="-android16-5-g75e9b1c7ae7c-abogki463945075-4k"|' "$DEF"
+          # Preserve the historical Xiaomi 17 full defconfig; only set our release label.
+          if grep -q '^CONFIG_LOCALVERSION=' "$DEF"; then
+            sed -i "s|^CONFIG_LOCALVERSION=.*|CONFIG_LOCALVERSION=\"$LV\"|" "$DEF"
+          else
+            echo "CONFIG_LOCALVERSION=\"$LV\"" >> "$DEF"
+          fi
           sed -i '/^CONFIG_LOCALVERSION_AUTO=/d' "$DEF"
+          sed -i '/^# CONFIG_LOCALVERSION_AUTO is not set$/d' "$DEF"
           echo 'CONFIG_LOCALVERSION_AUTO=n' >> "$DEF"
 
-          cat >> "$DEF" <<'EOF'
-          CONFIG_KSU=y
-          CONFIG_KSU_SUSFS=y
-          CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
-          CONFIG_KSU_SUSFS_SUS_PATH=y
-          CONFIG_KSU_SUSFS_SUS_MOUNT=y
-          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
-          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y
-          CONFIG_KSU_SUSFS_SUS_KSTAT=y
-          CONFIG_KSU_SUSFS_TRY_UMOUNT=y
-          CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y
-          CONFIG_KSU_SUSFS_SPOOF_UNAME=y
-          CONFIG_KSU_SUSFS_ENABLE_LOG=y
-          CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
-          CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
-          CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
-          CONFIG_KSU_SUSFS_SUS_MAP=y
-          CONFIG_TMPFS_XATTR=y
-          CONFIG_TMPFS_POSIX_ACL=y
-          CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y
-          EOF
+          # The dedicated Xiaomi profile already has these; fail rather than silently
+          # mutating to a generic GKI profile if they disappear.
+          grep -q '^CONFIG_KSU=y$' "$DEF"
+          grep -q '^CONFIG_KSU_SUSFS=y$' "$DEF"
+          grep -q '^CONFIG_KPM=y$' "$DEF"
+          grep -q '^CONFIG_MODVERSIONS=y$' "$DEF"
+          grep -q '^CONFIG_LTO_NONE=y$' "$DEF"
+          grep -q '^# CONFIG_TRIM_UNUSED_KSYMS is not set$' "$DEF"
 
-          grep -q '^CONFIG_LOCALVERSION="-android16-5-g75e9b1c7ae7c-abogki463945075-4k"$' "$DEF"
-          echo "✅ Config prepared for Xiaomi 17 Pro Max stock KMI/release"
+          echo "XIAOMO_LOCALVERSION=$LV" >> "$GITHUB_ENV"
+          echo "✅ Dedicated Xiaomi 17 config preserved; localversion=$LV"
 
-      - name: Build 6.12.23 Image
+      - name: Build dedicated Kokuban 6.12.23 Image
         run: |
           set -euo pipefail
           ROOT="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform"
@@ -254,54 +298,81 @@ jobs:
           export BINDGEN=bindgen
           export LIBCLANG_PATH="$ROOT/clang19/lib"
           export LLVM=1 LLVM_IAS=1 ARCH=arm64 SUBARCH=arm64
-          # Prevent setlocalversion from appending "+" because this source is
-          # intentionally patched after checkout. CONFIG_LOCALVERSION already
-          # carries the exact Xiaomi stock release suffix.
           export LOCALVERSION=""
           export CROSS_COMPILE=aarch64-linux-gnu-
           export LD=ld.lld HOSTLD=ld.lld AR=llvm-ar NM=llvm-nm
           export OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip
 
           cd "$ROOT/common"
+
           make O=out ARCH=arm64 LLVM=1 gki_defconfig
+
+          # Verify that olddefconfig did not silently turn the Xiaomi-specific profile
+          # back into a generic ACK config.
+          scripts/config --file out/.config --disable TRIM_UNUSED_KSYMS
+          scripts/config --file out/.config \
+            --enable LTO_NONE --disable LTO_CLANG_THIN --disable LTO_CLANG_FULL
+          make O=out ARCH=arm64 LLVM=1 olddefconfig
+
+          grep -q '^CONFIG_KSU=y$' out/.config
+          grep -q '^CONFIG_KSU_SUSFS=y$' out/.config
+          grep -q '^CONFIG_KPM=y$' out/.config
+          grep -q '^CONFIG_MODVERSIONS=y$' out/.config
+          grep -q '^CONFIG_LTO_NONE=y$' out/.config
+          grep -q '^# CONFIG_TRIM_UNUSED_KSYMS is not set$' out/.config
+
           make -j"$(nproc)" O=out ARCH=arm64 LLVM=1 \
             CC="$CC" HOSTCC="$HOSTCC" LD=ld.lld HOSTLD=ld.lld \
             RUSTC="$RUSTC" BINDGEN="$BINDGEN" Image
 
           test -s out/arch/arm64/boot/Image
+
           RELEASE="$(make -s O=out ARCH=arm64 LLVM=1 kernelrelease)"
           echo "Built release: $RELEASE"
-          [ "$RELEASE" = "$STOCK_UNAME" ] || { echo "❌ release mismatch"; exit 16; }
+          case "$RELEASE" in
+            6.12.23-android16-Kokuban-SilverWolf-SukiSUUltra-g${MI17_BASE_SHORT}-4k) ;;
+            *)
+              echo "❌ unexpected Kokuban release: $RELEASE"
+              exit 18
+              ;;
+          esac
 
           mkdir -p "$ROOT/out/Final-Image-Find"
           cp out/arch/arm64/boot/Image "$ROOT/out/Final-Image-Find/Image"
-          echo "✅ Kernel Image built"
+
+          echo "XIAOMO_BUILT_RELEASE=$RELEASE" >> "$GITHUB_ENV"
+          echo "✅ Dedicated Xiaomi 17 Image built from proven Kokuban 6.12.23 base"
 
       - name: Apply KPM
         run: |
           set -euo pipefail
           OUT="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/out/Final-Image-Find"
           KPM="$GITHUB_WORKSPACE/kernel_workspace/SukiSU_patch/kpm/patch_linux"
-          test -x "$KPM" || chmod +x "$KPM"
+
+          test -f "$KPM"
+          chmod +x "$KPM"
+
           cd "$OUT"
           cp "$KPM" ./patch_linux
           chmod +x patch_linux
           ./patch_linux
+
           test -s oImage
           mv -f oImage Image
           echo "✅ KPM applied"
 
-      - name: Build Xiaomi AK3 package
+      - name: Build Xiaomi 17 Pro Max Kokuban AK3
         run: |
           set -euo pipefail
-          git clone --depth=1 https://github.com/Numbersf/AnyKernel3 AnyKernel3
+
+          git clone --depth=1 https://github.com/YuzakiKokuban/AnyKernel3 AnyKernel3
           rm -rf AnyKernel3/.git
           cp "$GITHUB_WORKSPACE/templates/anykernel_xiaomi17promax.sh" AnyKernel3/anykernel.sh
 
-          sed -i 's|__TARGET__|Xiaomi 17 Pro Max (popsicle)|g' AnyKernel3/anykernel.sh
-          sed -i 's|__KERNEL__|6.12.23|g' AnyKernel3/anykernel.sh
+          sed -i 's|__TARGET__|Xiaomi 17 Pro Max / popsicle / Kokuban 6.12.23|g' AnyKernel3/anykernel.sh
+          sed -i 's|__KERNEL__|6.12.23 Kokuban dedicated base|g' AnyKernel3/anykernel.sh
           sed -i 's|__KERNEL_MM__|6.12|g' AnyKernel3/anykernel.sh
-          sed -i 's|__KERNEL_PREFIX__|6.12.23-android16-5|g' AnyKernel3/anykernel.sh
+          sed -i 's|__KERNEL_PREFIX__|6.12.23|g' AnyKernel3/anykernel.sh
           sed -i 's|__DEVICE_ID__|popsicle|g' AnyKernel3/anykernel.sh
           sed -i "s|__FORCED_UNAME__|$STOCK_UNAME|g" AnyKernel3/anykernel.sh
           sed -i "s|__UNICODE__|${XIAOMO_UNICODE_DISPLAY}|g" AnyKernel3/anykernel.sh
@@ -309,23 +380,28 @@ jobs:
 
           if grep -Eq '__TARGET__|__KERNEL__|__KERNEL_MM__|__KERNEL_PREFIX__|__DEVICE_ID__|__FORCED_UNAME__|__UNICODE__|__FUSE_BPF__' AnyKernel3/anykernel.sh; then
             echo "❌ AK3 placeholder remains"
-            exit 17
+            exit 19
           fi
+
           dash -n AnyKernel3/anykernel.sh
           sh -n AnyKernel3/anykernel.sh
 
           cp kernel_workspace/kernel_platform/out/Final-Image-Find/Image AnyKernel3/Image
+          test -s AnyKernel3/Image
 
           {
             echo "TARGET=Xiaomi 17 Pro Max"
             echo "CODENAME=popsicle"
             echo "ANDROID=16"
             echo "KERNEL_BASE=6.12.23"
-            echo "STOCK_UNAME=$STOCK_UNAME"
-            echo "ACK_TAG=$ACK_TAG"
-            echo "ACK_SHA=$ACK_SHA"
+            echo "BUILT_RELEASE=${XIAOMO_BUILT_RELEASE}"
+            echo "SOURCE_REPO=${MI17_BASE_REPO}"
+            echo "SOURCE_SHA=${MI17_BASE_SHA}"
+            echo "PROVEN_RELEASE=${MI17_BASE_RELEASE}"
+            echo "PROVEN_RELEASE_SHA256=${MI17_BASE_RELEASE_SHA256}"
+            echo "STOCK_UNAME_FOR_SUSFS_SPOOF=$STOCK_UNAME"
             echo "SUKISU_ULTRA=40959"
-            echo "SUSFS=2.3.0"
+            echo "SUSFS=${SUSFS_VERSION}"
             echo "KPM=enabled"
             echo "UNICODE_STATUS=${XIAOMO_UNICODE_STATUS}"
             echo "UNICODE_SOURCE=${XIAOMO_UNICODE_SOURCE}"
@@ -335,7 +411,7 @@ jobs:
             echo "FUSE_READDIR_GUARD_SOURCE=${XIAOMO_FUSE_READDIR_GUARD_SOURCE}"
             echo "FUSE_BPF_STATUS=${XIAOMO_FUSE_BPF_STATUS}"
             echo "FUSE_BPF_SOURCE=${XIAOMO_FUSE_BPF_SOURCE}"
-            echo "NOTE=Public Xiaomi ACK r8 source is used; stock g75e9... source revision is not publicly resolved."
+            echo "BASELINE_NOTE=Dedicated Xiaomi17 Kokuban 6.12.23 source with historical public release; generic ACK base removed."
           } > AnyKernel3/storage-fix-status.txt
 
           curl -fL --retry 3 -o ksu_module_susfs.zip \
@@ -344,13 +420,12 @@ jobs:
           unzip -t ksu_module_susfs.zip >/dev/null
           cp ksu_module_susfs.zip AnyKernel3/
 
-          test -s AnyKernel3/Image
-          echo "✅ Xiaomi 17 Pro Max AK3 ready"
+          echo "✅ Xiaomi 17 Pro Max Kokuban AK3 ready"
 
-      - name: Upload Xiaomi 17 Pro Max AK3
+      - name: Upload Xiaomi 17 Pro Max Kokuban AK3
         uses: actions/upload-artifact@v7
         with:
-          name: Xiaomi17ProMax_SukiSUUltra_40959_6.12.23_KPM_ILH
+          name: Xiaomi17ProMax_Kokuban61223_SukiSUUltra_40959_KPM_ILH
           path: AnyKernel3/*
           retention-days: 7
           compression-level: 9
