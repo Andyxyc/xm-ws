@@ -1,6 +1,6 @@
 ### AnyKernel3 Ramdisk Mod Script
 ## Xiaomi 17 Pro Max device-specific package
-## Based on Numbersf/AnyKernel3 and osm0sis AnyKernel3
+## Based on YuzakiKokuban/AnyKernel3 and osm0sis AnyKernel3
 
 properties() { printf '%s\n' '
 kernel.string=xiaomo Xiaomi 17 Pro Max Kernel
@@ -19,8 +19,8 @@ supported.patchlevels=
 supported.vendorpatchlevels=
 '; }
 
-BLOCK=boot
-IS_SLOT_DEVICE=auto
+BLOCK=/dev/block/by-name/boot
+IS_SLOT_DEVICE=1
 RAMDISK_COMPRESSION=auto
 PATCH_VBMETA_FLAG=auto
 NO_MAGISK_CHECK=1
@@ -253,13 +253,10 @@ for p in /data/adb/ksud /data/adb/ksu/bin/ksud /data/adb/sukisu/bin/ksud; do
 done
 
 ui_print "正在刷写内核..."
+# Kokuban Xiaomi 17 系列基线只替换 boot 内核，不修改/重打包 ramdisk。
+# 这样保持当前 ROM 的 boot ramdisk 与厂商启动参数原样不动。
 split_boot
-if [ -f "split_img/ramdisk.cpio" ]; then
-  unpack_ramdisk
-  write_boot
-else
-  flash_boot
-fi
+flash_boot
 sync
 ui_print "✅ 内核刷写完成。"
 
