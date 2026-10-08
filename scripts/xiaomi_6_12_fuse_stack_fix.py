@@ -29,20 +29,13 @@ dir_c = dir_c.replace(
     "char filtered_name[FUSE_NAME_MAX + 1];",
     "char filtered_name[64];",
 )
-if dir_c.count("char filtered_name[64];") < 2:
-    raise SystemExit("dir.c: expected two bounded lookup scratch buffers")
-
-old = """\t\tlookup_name.len = fuse_filter_lookup_name(entry->d_name.name,
-\t\t\t\tentry->d_name.len, filtered_name, sizeof(filtered_name));
-\t\tlookup_name.name = filtered_name;
-"""
-new = """\t\tif (entry->d_name.len < sizeof(filtered_name)) {
-\t\t\tlookup_name.len = fuse_filter_lookup_name(entry->d_name.name,
-\t\t\t\t\tentry->d_name.len, filtered_name, sizeof(filtered_name));
-\t\t\tlookup_name.name = filtered_name;
-\t\t}
-"""
-dir_c = replace_once(dir_c, old, new, "revalidate bounded normalization")
+# The generic filter now allocates dentry-revalidate scratch on the heap.
+# Only fuse_lookup_name() keeps a stack scratch buffer in dir.c.
+if dir_c.count("char filtered_name[64];") != 1:
+    raise SystemExit(
+        f"dir.c: expected one bounded normal-lookup scratch buffer, found "
+        f"{dir_c.count('char filtered_name[64];')}"
+    )
 
 old = """\tlookup_name.len = fuse_filter_lookup_name(name->name, name->len,
 \t\t\tfiltered_name, sizeof(filtered_name));
