@@ -8,6 +8,7 @@ on:
       - .github/workflows/pad-pro-test.yml
       - .github/workflows/Build Kernel OnePlus.yml
       - scripts/padpro_fuse_name_filter.py
+      - scripts/padpro_fuse_readdir_guard.py
       - patches/fuse_bpf_lookup_revalidate_6.1.patch
       - patches/unicode_bypass_fix_6.1+.patch
       - templates/anykernel.sh
@@ -83,6 +84,7 @@ jobs:
               'fs/fuse/backing.c',
               'fs/fuse/dir.c',
               'fs/fuse/fuse_i.h',
+              'fs/fuse/readdir.c',
               'arch/arm64/configs/gki_defconfig',
           )
           headers = {
@@ -115,6 +117,11 @@ jobs:
                   ['python3', apply_script, str(root)],
                   check=True, timeout=30
               )
+              readdir_guard = str(Path('scripts/padpro_fuse_readdir_guard.py').resolve())
+              subprocess.run(
+                  ['python3', readdir_guard, str(root)],
+                  check=True, timeout=30
+              )
 
               patch = str(Path('patches/fuse_bpf_lookup_revalidate_6.1.patch').resolve())
               subprocess.run(
@@ -129,12 +136,17 @@ jobs:
               backing = (root / 'fs/fuse/backing.c').read_text()
               directory = (root / 'fs/fuse/dir.c').read_text()
               header = (root / 'fs/fuse/fuse_i.h').read_text()
+              readdir = (root / 'fs/fuse/readdir.c').read_text()
               checks = {
                   'config_fuse_bpf': 'CONFIG_FUSE_BPF=y' in config,
                   'name_filter_helper': 'fuse_default_ignorable_code_point' in directory and 'fuse_filter_lookup_name' in directory,
                   'daemon_lookup_filtered': 'fuse_lookup_init(fm->fc, &args, nodeid, &lookup_name' in directory,
                   'bpf_lookup_filtered': 'fli->filtered_name_len = fuse_filter_lookup_name' in backing,
                   'lookup_io_buffer': 'filtered_name[FUSE_NAME_MAX + 1]' in header,
+                  'readdir_guard': 'fuse_android_private_dir_readdir_denied' in readdir and 'return -EACCES;' in readdir,
+                  'readdir_android_match': 'fuse_component_eq_ascii(&parent->d_name, "Android")' in readdir,
+                  'readdir_data_obb_match': 'fuse_component_eq_ascii(&dentry->d_name, "data")' in readdir and 'fuse_component_eq_ascii(&dentry->d_name, "obb")' in readdir,
+                  'readdir_app_uid_scope': 'if (uid < 10000)' in readdir,
                   'initialize': 'fuse_lookup_revalidate_initialize' in backing and 'fuse_lookup_revalidate_initialize' in header,
                   'backing': 'fuse_lookup_revalidate_backing' in backing and 'fuse_lookup_revalidate_backing' in header,
                   'finalize': 'fuse_lookup_revalidate_finalize' in backing and 'fuse_lookup_revalidate_finalize' in header,
@@ -150,6 +162,8 @@ jobs:
                   'ref': ref,
                   'name_filter_applicator': 'scripts/padpro_fuse_name_filter.py',
                   'name_filter_basis': 'FuseFixer Default_Ignorable_Code_Point normalization, moved kernel-side before FuseDaemon policy',
+                  'readdir_guard_applicator': 'scripts/padpro_fuse_readdir_guard.py',
+                  'readdir_guard_basis': 'DuckDetector directly lists /sdcard/Android/data and /sdcard/Android/obb; app UID enumeration must fail before Unicode bypass assessment',
                   'gerrit_change': 3943780,
                   'change_id': 'I35350e18ea15b706051dd40a8bae363529a73426',
                   'upstream_status': 'abandoned',
