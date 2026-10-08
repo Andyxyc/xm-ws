@@ -1,0 +1,190 @@
+name: Xiaomi 17 6.12.23 cctv18 SukiSU 40959
+
+run-name: Xiaomi17-cctv18-SukiSU40959-${{ github.run_id }}
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [SukiSU-Ultra]
+    paths:
+      - .github/workflows/xiaomi17-cctv18-sukisu40959.yml
+      - scripts/ksu_uapi_sync/**
+      - scripts/sukisu_compat/**
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: xiaomi17promax-cctv18-sukisu40959
+  cancel-in-progress: false
+
+env:
+  TZ: Asia/Shanghai
+  KSU_PIN: 70fa0e092a2c81060823f8ae526eac14fdda2930
+  KSUVER: "40959"
+  STOCK_SUFFIX: android16-5-g75e9b1c7ae7c-abogki463945075-4k
+  STOCK_RELEASE: 6.12.23-android16-5-g75e9b1c7ae7c-abogki463945075-4k
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+
+    steps:
+      - name: Checkout xiaomo patches
+        uses: actions/checkout@v7
+
+      - name: Fetch cctv18 proven Xiaomi-compatible builder
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 \
+            https://raw.githubusercontent.com/cctv18/oppo_oplus_realme_sm8850/main/local/builder_6.12.23.sh \
+            -o cctv18-builder.sh
+          chmod +x cctv18-builder.sh
+
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path("cctv18-builder.sh")
+          s=p.read_text()
+
+          s=s.replace(
+              'SU apt-mark hold firefox && apt-mark hold libc-bin && apt-mark hold man-db',
+              'SU apt-mark hold firefox; SU apt-mark hold libc-bin; SU apt-mark hold man-db'
+          )
+
+          start=s.index('if [[ $KSU_BRANCH == [yYrR] ]]; then')
+          end=s.index('elif [[ "$KSU_BRANCH" == "n" || "$KSU_BRANCH" == "N" ]]; then', start)
+
+          replacement=r'''if [[ "$KSU_BRANCH" == "y" || "$KSU_BRANCH" == "Y" ]]; then
+            echo ">>> 拉取真正的 SukiSU Ultra 40959（保持 cctv18 其余内核流程不变）..."
+            curl -fLSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/${KSU_PIN}/kernel/setup.sh" | bash -s builtin
+
+            git -C KernelSU fetch origin "${KSU_PIN}" --depth=1
+            git -C KernelSU checkout --detach "${KSU_PIN}"
+            test "$(git -C KernelSU rev-parse HEAD)" = "${KSU_PIN}"
+
+            sed -i 's|^KSU_VERSION     := .*|KSU_VERSION     := 40959|' KernelSU/kernel/Makefile
+            sed -i 's|^VERSION_TAG     := .*|VERSION_TAG     := 4.2.0|' KernelSU/kernel/Makefile
+            if grep -q '^KSU_VERSION_FULL := ' KernelSU/kernel/Makefile; then
+              sed -i 's|^KSU_VERSION_FULL := .*|KSU_VERSION_FULL := v4.2.0-xiaomo@builtin[70fa0e09]|' KernelSU/kernel/Makefile
+            fi
+
+            UAPI_FILE=""
+            for f in KernelSU/kernel/include/uapi/supercall.h KernelSU/uapi/supercall.h; do
+              [ -f "$f" ] && { UAPI_FILE="$f"; break; }
+            done
+            if [ -n "$UAPI_FILE" ]; then
+              read_uapi() {
+                grep -ohE 'KERNEL_SU_UAPI_VERSION[^0-9]*[0-9]+' "$UAPI_FILE" | grep -oE '[0-9]+' | tail -n1
+              }
+              CURRENT_UAPI="$(read_uapi || true)"
+              if [ "${CURRENT_UAPI:-0}" -lt 5 ]; then
+                patch -p1 --forward -d KernelSU < "$GITHUB_WORKSPACE/scripts/ksu_uapi_sync/builtin-uapi5.patch"
+              fi
+            fi
+
+            bash "$GITHUB_WORKSPACE/scripts/sukisu_compat/apply.sh" KernelSU
+            echo 'CONFIG_KSU_FULL_NAME_FORMAT="%TAG_NAME%-%COMMIT_SHA%@xiaomo"' >> ./common/arch/arm64/configs/gki_defconfig
+
+          elif [[ "$KSU_BRANCH" == "r" || "$KSU_BRANCH" == "R" ]]; then
+            echo ">>> 拉取 BakaSU（仅保留为对照分支）..."
+            curl -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/refs/heads/main/kernel/setup.sh" | bash -s main
+            echo 'CONFIG_KSU_FULL_NAME_FORMAT="%TAG_NAME%-%COMMIT_SHA%@cctv18"' >> ./common/arch/arm64/configs/gki_defconfig
+          '''
+          s=s[:start]+replacement+s[end:]
+          p.write_text(s)
+          PY
+
+          bash -n cctv18-builder.sh
+          grep -q '真正的 SukiSU Ultra 40959' cctv18-builder.sh
+          grep -q 'cctv18/android_kernel_common_oneplus_sm8850' cctv18-builder.sh
+          echo "✅ cctv18 builder patched: only KSU implementation changed"
+
+      - name: Build SukiSU port from same cctv18 Xiaomi-working base
+        env:
+          MANIFEST: Xiaomi17Series
+        run: |
+          set -euo pipefail
+
+          printf '%s\n' \
+            "$STOCK_SUFFIX" \
+            "y" \
+            "n" \
+            "y" \
+            "y" \
+            "n" \
+            "n" \
+            "n" \
+            "n" \
+            "y" \
+            "n" \
+            "y" \
+            | bash ./cctv18-builder.sh
+
+      - name: Verify port against uploaded Baka baseline profile
+        run: |
+          set -euo pipefail
+          ZIP="$(find kernel_workspace -maxdepth 2 -type f -name '*.zip' | head -n1)"
+          test -n "$ZIP" && test -s "$ZIP"
+
+          rm -rf verify && mkdir verify
+          unzip -q "$ZIP" Image -d verify
+          test -s verify/Image
+
+          BANNER="$(strings -a verify/Image | grep -m1 '^Linux version ')"
+          echo "$BANNER"
+          printf '%s\n' "$BANNER" | grep -F "$STOCK_RELEASE"
+
+          strings -a verify/Image | grep -E 'v4\.2\.0-xiaomo@builtin|SukiSU|40959' | head -n 30 || true
+          if strings -a verify/Image | grep -qF 'v4.2.0-rc3-1bfed00f@cctv18'; then
+            echo "❌ BakaSU identity still present"
+            exit 30
+          fi
+
+          python3 - <<'PY'
+          import gzip
+          from pathlib import Path
+          data=Path("verify/Image").read_bytes()
+          a=data.find(b"IKCFG_ST")
+          b=data.find(b"IKCFG_ED", a+8)
+          if a < 0 or b < 0:
+              raise SystemExit("embedded IKCONFIG not found")
+          cfg=gzip.decompress(data[a+8:b]).decode("utf-8","replace")
+          Path("verify/config.txt").write_text(cfg)
+
+          must = [
+              "CONFIG_KSU=y",
+              "CONFIG_KSU_SUSFS=y",
+              "CONFIG_BBG=y",
+              "CONFIG_BBG_BLOCK_RECOVERY=y",
+              "CONFIG_MQ_IOSCHED_ADIOS=y",
+              "CONFIG_MQ_IOSCHED_DEFAULT_ADIOS=y",
+              "CONFIG_MODVERSIONS=y",
+              "CONFIG_LTO_NONE=y",
+              "CONFIG_GKI_TASK_STRUCT_VENDOR_SIZE_MAX=512",
+              "CONFIG_FUSE_BPF=y",
+              "# CONFIG_IP_SET is not set",
+              "# CONFIG_REKERNEL is not set",
+          ]
+          missing=[x for x in must if x not in cfg]
+          if missing:
+              raise SystemExit("profile mismatch: " + repr(missing))
+          print("✅ Critical boot/profile config matches uploaded working Baka baseline")
+          PY
+
+          OUT="Xiaomi17ProMax_SukiSUUltra_40959_cctv18_6.12.23_BASEPORT.zip"
+          cp "$ZIP" "$OUT"
+          sha256sum "$OUT" | tee "$OUT.sha256"
+          echo "PORT_ZIP=$OUT" >> "$GITHUB_ENV"
+
+      - name: Upload SukiSU base port
+        uses: actions/upload-artifact@v7
+        with:
+          name: Xiaomi17ProMax_SukiSUUltra_40959_cctv18_6.12.23_BASEPORT
+          path: |
+            ${{ env.PORT_ZIP }}
+            ${{ env.PORT_ZIP }}.sha256
+            verify/config.txt
+          retention-days: 7
+          compression-level: =
