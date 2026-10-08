@@ -1,0 +1,112 @@
+name: Retry Failed Ace Builds
+run-name: ace-retry-${{ github.run_id }}
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [SukiSU-Ultra]
+    paths:
+      - .github/workflows/ace-retry-failed.yml
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: oneplus-ace-retry-failed
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    if: github.repository == 'Andyxyc/xm-ws'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Dispatch repaired Ace builds
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y python3-yaml
+          python3 - <<'PY'
+          import json, os, subprocess, time, yaml
+          from pathlib import Path
+
+          repo=os.environ['GITHUB_REPOSITORY']
+          ref='SukiSU-Ultra'
+          sha=os.environ['GITHUB_SHA']
+          workflow='Build Kernel OnePlus.yml'
+          targets=['oneplus_ace_t','oneplus_ace5_race_b']
+
+          doc=yaml.load((Path('.github/workflows')/workflow).read_text(encoding='utf-8'),Loader=yaml.BaseLoader)
+          fields=doc['on']['workflow_dispatch']['inputs']
+          opts=fields['FILE']['options']
+          missing=[x for x in targets if x not in opts]
+          if missing:
+              raise SystemExit('Missing retry targets: '+', '.join(missing))
+
+          values={k:v.get('default','') for k,v in fields.items()}
+          values.update(
+              SUSFS_CI='Release',KPM='KPM',SUSFS_META='',DYNAMIC_REPO='Numbersf',
+              BUILD_TIME='-1',SOURCE_PROFILE='',
+              KSU_META='main/builtin/xiaomo/70fa0e092a2c81060823f8ae526eac14fdda2930',
+              LZ4_UPDATE='false',ZRAM='0/lz4kd/8589934592',SUFFIX='-1',RESUBLEVEL='',
+              FAST_BUILD='true',LSM_BBG='false',NETFILTER='true',CCM='false',
+              UNICODE_BYPASS='true',SCHED_HMBIRD='true',DROID_SPACES='false',
+              RE_KERNEL='false',SUSFS_DEV='false',SPACE_NOCLEAN='false',BUILD_NOCACHE='false'
+          )
+
+          def api(path,method='GET',payload=None):
+              args=['gh','api',path,'-H','Accept: application/vnd.github+json',
+                    '-H','X-GitHub-Api-Version: 2022-11-28']
+              data=None
+              if method!='GET': args += ['--method',method]
+              if payload is not None:
+                  args += ['--input','-']
+                  data=json.dumps(payload)
+              p=subprocess.run(args,input=data,capture_output=True,text=True,timeout=90)
+              if p.returncode:
+                  raise RuntimeError(p.stderr[-2000:])
+              return json.loads(p.stdout) if p.stdout.strip() else {}
+
+          actual=api(f'repos/{repo}/branches/{ref}')['commit']['sha']
+          if actual!=sha:
+              raise SystemExit(f'Branch moved: expected {sha}, got {actual}')
+
+          Path('ace-retry-receipts').mkdir(exist_ok=True)
+          receipt={'controller_run':os.environ['GITHUB_RUN_ID'],'head_sha':sha,'runs':[]}
+          out=Path('ace-retry-receipts/runs.json')
+          def save():
+              out.write_text(json.dumps(receipt,ensure_ascii=False,indent=2),encoding='utf-8')
+          save()
+
+          for device in targets:
+              response=api(
+                  f'repos/{repo}/actions/workflows/Build%20Kernel%20OnePlus.yml/dispatches',
+                  method='POST',
+                  payload={'ref':ref,'inputs':dict(values,FILE=device),'return_run_details':True}
+              )
+              rid=response.get('workflow_run_id')
+              if type(rid) is not int or rid<=0:
+                  raise RuntimeError('Missing run id for '+device)
+              receipt['runs'].append({'device':device,'run_id':rid,'url':response.get('html_url')})
+              save()
+              print(device,rid,flush=True)
+              time.sleep(2)
+          PY
+
+      - name: Upload retry receipts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ace-retry-receipts-${{ github.run_id }}
+          path: ace-retry-receipts/
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 9
