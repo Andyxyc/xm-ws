@@ -254,6 +254,10 @@ jobs:
           export BINDGEN=bindgen
           export LIBCLANG_PATH="$ROOT/clang19/lib"
           export LLVM=1 LLVM_IAS=1 ARCH=arm64 SUBARCH=arm64
+          # Prevent setlocalversion from appending "+" because this source is
+          # intentionally patched after checkout. CONFIG_LOCALVERSION already
+          # carries the exact Xiaomi stock release suffix.
+          export LOCALVERSION=""
           export CROSS_COMPILE=aarch64-linux-gnu-
           export LD=ld.lld HOSTLD=ld.lld AR=llvm-ar NM=llvm-nm
           export OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip
