@@ -7,6 +7,7 @@ on:
     branches: [SukiSU-Ultra]
     paths:
       - .github/workflows/oneplus-storage-fix-matrix.yml
+      - .github/workflows/Build Kernel OnePlus.yml
       - scripts/padpro_fuse_name_filter.py
       - scripts/padpro_fuse_readdir_guard.py
       - patches/fuse_bpf_lookup_revalidate_6.1.patch
