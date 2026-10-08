@@ -5,7 +5,9 @@ on:
   workflow_dispatch:
   push:
     branches: [SukiSU-Ultra]
-    paths: [.github/workflows/oneplus-storage-build-smoke.yml]
+    paths:
+      - .github/workflows/oneplus-storage-build-smoke.yml
+      - .github/workflows/Build Kernel OnePlus.yml
 
 permissions:
   actions: write
