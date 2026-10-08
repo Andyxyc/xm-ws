@@ -187,8 +187,10 @@ jobs:
           FUSE_PATCH="$GITHUB_WORKSPACE/patches/fuse_bpf_lookup_revalidate_6.1.patch"
           patch -p1 --dry-run --forward --fuzz=0 < "$FUSE_PATCH"
           patch -p1 --forward --fuzz=0 < "$FUSE_PATCH"
+          python3 "$GITHUB_WORKSPACE/scripts/fuse_revalidate_stack_split.py" .
 
           grep -qF 'fuse_default_ignorable_code_point' fs/fuse/dir.c
+          grep -qF 'fuse_bpf_lookup_revalidate_run' fs/fuse/dir.c
           grep -qF 'fuse_android_private_dir_readdir_denied' fs/fuse/readdir.c
           grep -qF 'fuse_lookup_revalidate_initialize' fs/fuse/backing.c
           # SUSFS touches unrelated files that carry upstream whitespace.
