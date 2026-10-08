@@ -155,17 +155,13 @@ jobs:
 
           cd "$K"
 
-          source ./_setup_env.sh 2>/dev/null || true
-          make O=out ARCH=arm64 SUBARCH=arm64 LLVM=1 LLVM_IAS=1 \
-            TARGET_SOC=sm8850 LOCALVERSION_AUTO=n LOCALVERSION= gki_defconfig
+          bash -c 'source ./_setup_env.sh 2>/dev/null || true; make O=out ARCH=arm64 SUBARCH=arm64 LLVM=1 LLVM_IAS=1 TARGET_SOC=sm8850 LOCALVERSION_AUTO=n LOCALVERSION= gki_defconfig'
 
           scripts/config --file out/.config --disable TRIM_UNUSED_KSYMS
           scripts/config --file out/.config \
             --enable LTO_NONE --disable LTO_CLANG_THIN --disable LTO_CLANG_FULL
 
-          source ./_setup_env.sh 2>/dev/null || true
-          make O=out ARCH=arm64 SUBARCH=arm64 LLVM=1 LLVM_IAS=1 \
-            TARGET_SOC=sm8850 LOCALVERSION_AUTO=n LOCALVERSION= olddefconfig
+          bash -c 'source ./_setup_env.sh 2>/dev/null || true; make O=out ARCH=arm64 SUBARCH=arm64 LLVM=1 LLVM_IAS=1 TARGET_SOC=sm8850 LOCALVERSION_AUTO=n LOCALVERSION= olddefconfig'
 
           # Control build must be clean: no built-in root/SUSFS from our project.
           if grep -q '^CONFIG_KSU=y$' out/.config; then
@@ -177,9 +173,8 @@ jobs:
             exit 21
           fi
 
-          source ./_setup_env.sh 2>/dev/null || true
-          make -j"$(nproc)" O=out ARCH=arm64 SUBARCH=arm64 LLVM=1 LLVM_IAS=1 \
-            TARGET_SOC=sm8850 LOCALVERSION_AUTO=n LOCALVERSION= Image
+          JOBS="$(nproc)"
+          bash -c 'source ./_setup_env.sh 2>/dev/null || true; make -j"'"$JOBS"'" O=out ARCH=arm64 SUBARCH=arm64 LLVM=1 LLVM_IAS=1 TARGET_SOC=sm8850 LOCALVERSION_AUTO=n LOCALVERSION= Image'
 
           test -s out/arch/arm64/boot/Image
           REL="$(make -s O=out ARCH=arm64 LLVM=1 LOCALVERSION_AUTO=n LOCALVERSION= kernelrelease)"
