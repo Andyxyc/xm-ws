@@ -21,6 +21,36 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - label: mt6789-6.12
+            repo: OnePlusOSS/android_kernel_oneplus_mt6789
+            ref: oneplus/mt6789_b_16.0_pad_lite
+          - label: mt6833-6.6
+            repo: OnePlusOSS/android_kernel_oneplus_mt6833
+            ref: oneplus/mt6833_v_15.0.0_nord_n30_se_5g
+          - label: mt6835-5.15
+            repo: OnePlusOSS/android_kernel_oneplus_mt6835
+            ref: oneplus/mt6835_b_16.0_n6
+          - label: mt6878-6.1
+            repo: OnePlusOSS/android_kernel_oneplus_mt6878
+            ref: oneplus/mt6878_b_16.0_nord_ce6_lite
+          - label: mt6895-5.10
+            repo: OnePlusOSS/android_kernel_5.10_oneplus_mt6895
+            ref: oneplus/mt6895_v_15.0.0_oneplus_10r
+          - label: mt6897-6.1
+            repo: OnePlusOSS/android_kernel_oneplus_mt6897
+            ref: oneplus/mt6897_b_16.0.0_nord_ce5
+          - label: mt6983-5.10
+            repo: OnePlusOSS/android_kernel_5.10_oneplus_mt6983
+            ref: oneplus/mt6983_b_16.0.0_nord_3
+          - label: mt6989-6.1
+            repo: OnePlusOSS/android_kernel_oneplus_mt6989
+            ref: oneplus/mt6989_b_16.0.0_ace5_race
+          - label: mt6991-6.6
+            repo: OnePlusOSS/android_kernel_oneplus_mt6991
+            ref: oneplus/mt6991_b_16.0.0_oneplus_ace5_ultra
+          - label: mt6993-6.12
+            repo: OnePlusOSS/android_kernel_oneplus_mt6993
+            ref: oneplus/mt6993_b_16.0_ace_6_ultra
           - label: sm6375-6.1
             repo: OnePlusOSS/android_kernel_common_oneplus_sm6375
             ref: oneplus/sm6375_b_16.0.0_nord_ce4_lite_5g
