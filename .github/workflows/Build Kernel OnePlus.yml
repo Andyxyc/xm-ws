@@ -1068,6 +1068,38 @@ jobs:
           source "$REJ_CHECKER"
           check_rejects .
 
+      - name: Apply Pad Pro Android data-obb readdir guard
+        if: ${{ github.event.inputs.UNICODE_BYPASS == 'true' && (github.event.inputs.FILE == 'oneplus_pad_pro_b' || github.event.inputs.FILE == 'oneplus_pad_pro_v') }}
+        run: |
+          set -euo pipefail
+          APPLY_SCRIPT="${GITHUB_WORKSPACE}/kernel_workspace/Action-Build/scripts/padpro_fuse_readdir_guard.py"
+          cd kernel_workspace/kernel_platform/common
+
+          if [ "${VERSIONLEVEL}" -ne 6 ] || [ "${PATCHLEVEL}" -ne 1 ]; then
+            echo "❌ Android/data readdir guard is pinned to Linux 6.1; got ${VERSIONLEVEL}.${PATCHLEVEL}"
+            exit 1
+          fi
+          test -f "$APPLY_SCRIPT"
+          test -f fs/fuse/readdir.c
+          grep -qF 'int fuse_readdir(struct file *file, struct dir_context *ctx)' fs/fuse/readdir.c
+
+          python3 "$APPLY_SCRIPT" .
+
+          grep -qF 'fuse_android_private_dir_readdir_denied' fs/fuse/readdir.c
+          grep -qF 'return -EACCES;' fs/fuse/readdir.c
+          grep -qF 'fuse_component_eq_ascii(&parent->d_name, "Android")' fs/fuse/readdir.c
+          grep -qF 'fuse_component_eq_ascii(&dentry->d_name, "data")' fs/fuse/readdir.c
+          grep -qF 'fuse_component_eq_ascii(&dentry->d_name, "obb")' fs/fuse/readdir.c
+          grep -qF 'if (uid < 10000)' fs/fuse/readdir.c
+          git diff --check -- fs/fuse/readdir.c
+
+          echo "XIAOMO_FUSE_READDIR_GUARD_STATUS=android_data_obb_appuid_denied" >> "$GITHUB_ENV"
+          echo "XIAOMO_FUSE_READDIR_GUARD_SOURCE=DuckDetector SharedStorageProbes + KernelCvePatchProbe behavior" >> "$GITHUB_ENV"
+          echo "✅ Android app UIDs can no longer enumerate Android/data or Android/obb through FUSE readdir"
+
+          source "$REJ_CHECKER"
+          check_rejects .
+
       - name: Apply Pad Pro FUSE-BPF lookup revalidation
         if: ${{ github.event.inputs.UNICODE_BYPASS == 'true' && (github.event.inputs.FILE == 'oneplus_pad_pro_b' || github.event.inputs.FILE == 'oneplus_pad_pro_v') }}
         run: |
@@ -1107,7 +1139,7 @@ jobs:
           git diff --check -- fs/fuse/backing.c fs/fuse/dir.c fs/fuse/fuse_i.h
 
           echo "XIAOMO_FUSE_BPF_STATUS=lookup_revalidate" >> "$GITHUB_ENV"
-          echo "XIAOMO_FUSE_BPF_DISPLAY=name filter + lookup revalidate" >> "$GITHUB_ENV"
+          echo "XIAOMO_FUSE_BPF_DISPLAY=readdir guard + name filter + lookup revalidate" >> "$GITHUB_ENV"
           echo "XIAOMO_FUSE_BPF_SOURCE=Android kernel/common Gerrit 3943780" >> "$GITHUB_ENV"
           echo "✅ Pad Pro FUSE-BPF lookup revalidation patch applied with exact context"
 
@@ -1741,6 +1773,8 @@ jobs:
             echo "UNICODE_SOURCE=${XIAOMO_UNICODE_SOURCE:-none}"
             echo "FUSE_NAME_FILTER_STATUS=${XIAOMO_FUSE_NAME_FILTER_STATUS:-disabled}"
             echo "FUSE_NAME_FILTER_SOURCE=${XIAOMO_FUSE_NAME_FILTER_SOURCE:-none}"
+            echo "FUSE_READDIR_GUARD_STATUS=${XIAOMO_FUSE_READDIR_GUARD_STATUS:-disabled}"
+            echo "FUSE_READDIR_GUARD_SOURCE=${XIAOMO_FUSE_READDIR_GUARD_SOURCE:-none}"
             echo "FUSE_BPF_STATUS=${XIAOMO_FUSE_BPF_STATUS:-disabled}"
             echo "FUSE_BPF_SOURCE=${XIAOMO_FUSE_BPF_SOURCE:-none}"
             echo "FUSE_BPF_CHANGE_ID=I35350e18ea15b706051dd40a8bae363529a73426"
