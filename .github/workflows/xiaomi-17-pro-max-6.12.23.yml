@@ -1,0 +1,339 @@
+name: Xiaomi 17 Pro Max 6.12.23
+
+run-name: Xiaomi17ProMax-6.12.23-${{ github.run_id }}
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [SukiSU-Ultra]
+    paths:
+      - .github/workflows/xiaomi-17-pro-max-6.12.23.yml
+      - templates/anykernel_xiaomi17promax.sh
+      - scripts/padpro_fuse_name_filter.py
+      - scripts/padpro_fuse_readdir_guard.py
+      - patches/unicode_bypass_fix_6.1+.patch
+      - patches/fuse_bpf_lookup_revalidate_6.1.patch
+      - scripts/ksu_uapi_sync/**
+      - scripts/sukisu_compat/**
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: xiaomi17promax-6.12.23
+  cancel-in-progress: false
+
+env:
+  TZ: Asia/Shanghai
+  TARGET_NAME: Xiaomi17ProMax
+  DEVICE_CODENAME: popsicle
+  ANDROID_VERSION: android16
+  KERNEL_VERSION: "6.12"
+  KERNEL_BASE: "6.12.23"
+  KMI: android16-6.12
+  ACK_TAG: android16-6.12-2025-06_r8
+  ACK_SHA: f1bdb13583da85a47fcf1632a78ef52d6e6da651
+  STOCK_UNAME: 6.12.23-android16-5-g75e9b1c7ae7c-abogki463945075-4k
+  KSU_PIN: 70fa0e092a2c81060823f8ae526eac14fdda2930
+  KSUVER: "40959"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install build dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            aria2 bc bison flex build-essential libssl-dev libelf-dev libdw-dev \
+            dwarves ccache zstd unzip zip rsync python3 git curl
+          df -h
+
+      - name: Fetch Xiaomi-matched ACK source and toolchains
+        run: |
+          set -euo pipefail
+          mkdir -p kernel_workspace/kernel_platform
+          cd kernel_workspace/kernel_platform
+
+          git init common
+          git -C common remote add origin https://github.com/aosp-mirror/kernel_common.git
+          git -C common fetch --depth=1 origin "$ACK_SHA"
+          git -C common checkout --detach FETCH_HEAD
+          test "$(git -C common rev-parse HEAD)" = "$ACK_SHA"
+
+          VER="$(awk '/^VERSION =/ {v=$3} /^PATCHLEVEL =/ {p=$3} /^SUBLEVEL =/ {s=$3} END {print v"."p"."s}' common/Makefile)"
+          [ "$VER" = "$KERNEL_BASE" ] || { echo "❌ ACK version mismatch: $VER"; exit 10; }
+          grep -q '^CONFIG_FUSE_BPF=y$' common/arch/arm64/configs/gki_defconfig
+
+          mkdir -p clang19 rust
+          aria2c -q -s16 -x16 -k1M \
+            https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang19-r536225/clang-r536225.zip \
+            -o clang.zip
+          unzip -q clang.zip -d clang19
+          rm -f clang.zip
+
+          aria2c -q -s16 -x16 -k1M \
+            https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang19-r536225/rust.zip \
+            -o rust.zip
+          unzip -q rust.zip -d rust
+          rm -f rust.zip
+
+          aria2c -q -s16 -x16 -k1M \
+            https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang19-r536225/build-tools.zip \
+            -o build-tools.zip
+          unzip -q build-tools.zip
+          rm -f build-tools.zip
+
+          echo "✅ Xiaomi ACK source pinned: $ACK_SHA ($ACK_TAG)"
+          ./clang19/bin/clang --version | head -n1
+
+      - name: Add SukiSU Ultra 40959
+        run: |
+          set -euo pipefail
+          cd kernel_workspace/kernel_platform
+          curl -fLSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/$KSU_PIN/kernel/setup.sh" | bash -s builtin
+          cd KernelSU
+          git fetch origin "$KSU_PIN" --depth=1
+          git checkout --detach "$KSU_PIN"
+          [ "$(git rev-parse HEAD)" = "$KSU_PIN" ]
+
+          sed -i 's|^KSU_VERSION     := .*|KSU_VERSION     := 40959|' kernel/Makefile
+          sed -i 's|^VERSION_TAG     := .*|VERSION_TAG     := 4.2.0|' kernel/Makefile
+          if grep -q '^KSU_VERSION_FULL := ' kernel/Makefile; then
+            sed -i 's|^KSU_VERSION_FULL := .*|KSU_VERSION_FULL := v4.2.0-xiaomo@builtin[70fa0e09]|' kernel/Makefile
+          fi
+          grep -q '^KSU_VERSION     := 40959$' kernel/Makefile
+          echo "✅ SukiSU Ultra fixed at 40959"
+
+      - name: Sync SukiSU UAPI 5 and compatibility
+        run: |
+          set -euo pipefail
+          cd kernel_workspace/kernel_platform
+          UAPI_FILE=""
+          for f in KernelSU/kernel/include/uapi/supercall.h KernelSU/uapi/supercall.h; do
+            [ -f "$f" ] && { UAPI_FILE="$f"; break; }
+          done
+          [ -n "$UAPI_FILE" ] || { echo "❌ supercall.h not found"; exit 11; }
+
+          read_uapi() {
+            grep -ohE 'KERNEL_SU_UAPI_VERSION[^0-9]*[0-9]+' "$UAPI_FILE" | grep -oE '[0-9]+' | tail -n1
+          }
+          CURRENT_UAPI="$(read_uapi)"
+          if [ "${CURRENT_UAPI:-0}" -lt 5 ]; then
+            patch -p1 --forward -d KernelSU < "$GITHUB_WORKSPACE/scripts/ksu_uapi_sync/builtin-uapi5.patch"
+          fi
+          [ "$(read_uapi)" = "5" ] || { echo "❌ UAPI 5 sync failed"; exit 12; }
+          bash "$GITHUB_WORKSPACE/scripts/sukisu_compat/apply.sh" KernelSU
+          echo "✅ SukiSU UAPI/compat ready"
+
+      - name: Apply SUSFS 2.3.0
+        run: |
+          set -euo pipefail
+          cd kernel_workspace
+          for n in 1 2 3; do
+            rm -rf susfs4ksu
+            git -c http.version=HTTP/1.1 clone --depth=1 -b gki-android16-6.12 \
+              https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu && break
+            [ "$n" = 3 ] && exit 13
+            sleep $((n*5))
+          done
+          SUSFS_VERSION="$(awk -F= '$1=="version" {print $2}' susfs4ksu/ksu_module_susfs/module.prop | head -n1)"
+          case "$SUSFS_VERSION" in v2.3.0*|2.3.0*) ;; *) echo "❌ SUSFS version: $SUSFS_VERSION"; exit 14 ;; esac
+
+          git clone --depth=1 https://github.com/ShirkNeko/SukiSU_patch.git SukiSU_patch
+
+          cp "susfs4ksu/kernel_patches/50_add_susfs_in_gki-android16-6.12.patch" kernel_platform/common/
+          cp -r susfs4ksu/kernel_patches/fs/* kernel_platform/common/fs/
+          cp -r susfs4ksu/kernel_patches/include/linux/* kernel_platform/common/include/linux/
+
+          cd kernel_platform/common
+          patch -p1 --dry-run -F 3 < 50_add_susfs_in_gki-android16-6.12.patch
+          patch -p1 -F 3 < 50_add_susfs_in_gki-android16-6.12.patch
+          if find . -name '*.rej' -print -quit | grep -q .; then
+            echo "❌ SUSFS patch generated reject files"
+            find . -name '*.rej' -print
+            exit 15
+          fi
+          echo "✅ SUSFS $SUSFS_VERSION applied"
+
+      - name: Apply Unicode and FUSE storage fixes
+        run: |
+          set -euo pipefail
+          cd kernel_workspace/kernel_platform/common
+
+          UNICODE_PATCH="$GITHUB_WORKSPACE/patches/unicode_bypass_fix_6.1+.patch"
+          patch -p1 --dry-run --forward --fuzz=0 < "$UNICODE_PATCH"
+          patch -p1 --forward --fuzz=0 < "$UNICODE_PATCH"
+          grep -qF "if (*LEAF_STR(leaf) == '\\0')" fs/unicode/utf8-norm.c
+
+          python3 "$GITHUB_WORKSPACE/scripts/padpro_fuse_name_filter.py" .
+          python3 "$GITHUB_WORKSPACE/scripts/padpro_fuse_readdir_guard.py" .
+
+          FUSE_PATCH="$GITHUB_WORKSPACE/patches/fuse_bpf_lookup_revalidate_6.1.patch"
+          patch -p1 --dry-run --forward --fuzz=0 < "$FUSE_PATCH"
+          patch -p1 --forward --fuzz=0 < "$FUSE_PATCH"
+
+          grep -qF 'fuse_default_ignorable_code_point' fs/fuse/dir.c
+          grep -qF 'fuse_android_private_dir_readdir_denied' fs/fuse/readdir.c
+          grep -qF 'fuse_lookup_revalidate_initialize' fs/fuse/backing.c
+          git diff --check
+
+          echo "XIAOMO_UNICODE_STATUS=runtime_utf8_norm" >> "$GITHUB_ENV"
+          echo "XIAOMO_UNICODE_DISPLAY=runtime utf8-norm" >> "$GITHUB_ENV"
+          echo "XIAOMO_UNICODE_SOURCE=WildKernels 6.1+ runtime normalization fix" >> "$GITHUB_ENV"
+          echo "XIAOMO_FUSE_NAME_FILTER_STATUS=default_ignorable_filtered" >> "$GITHUB_ENV"
+          echo "XIAOMO_FUSE_NAME_FILTER_SOURCE=kernel-side MediaProvider/FUSE lookup normalization" >> "$GITHUB_ENV"
+          echo "XIAOMO_FUSE_READDIR_GUARD_STATUS=android_data_obb_appuid_denied" >> "$GITHUB_ENV"
+          echo "XIAOMO_FUSE_READDIR_GUARD_SOURCE=DuckDetector Android/data+obb readdir guard" >> "$GITHUB_ENV"
+          echo "XIAOMO_FUSE_BPF_STATUS=lookup_revalidate" >> "$GITHUB_ENV"
+          echo "XIAOMO_FUSE_BPF_DISPLAY=readdir guard + name filter + lookup revalidate" >> "$GITHUB_ENV"
+          echo "XIAOMO_FUSE_BPF_SOURCE=Android kernel/common Gerrit 3943780" >> "$GITHUB_ENV"
+          echo "✅ Unicode + FUSE full storage fix applied"
+
+      - name: Configure kernel
+        run: |
+          set -euo pipefail
+          DEF="kernel_workspace/kernel_platform/common/arch/arm64/configs/gki_defconfig"
+
+          sed -i 's|^CONFIG_LOCALVERSION=.*|CONFIG_LOCALVERSION="-android16-5-g75e9b1c7ae7c-abogki463945075-4k"|' "$DEF"
+          sed -i '/^CONFIG_LOCALVERSION_AUTO=/d' "$DEF"
+          echo 'CONFIG_LOCALVERSION_AUTO=n' >> "$DEF"
+
+          cat >> "$DEF" <<'EOF'
+          CONFIG_KSU=y
+          CONFIG_KSU_SUSFS=y
+          CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
+          CONFIG_KSU_SUSFS_SUS_PATH=y
+          CONFIG_KSU_SUSFS_SUS_MOUNT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y
+          CONFIG_KSU_SUSFS_SUS_KSTAT=y
+          CONFIG_KSU_SUSFS_TRY_UMOUNT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y
+          CONFIG_KSU_SUSFS_SPOOF_UNAME=y
+          CONFIG_KSU_SUSFS_ENABLE_LOG=y
+          CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
+          CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
+          CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
+          CONFIG_KSU_SUSFS_SUS_MAP=y
+          CONFIG_TMPFS_XATTR=y
+          CONFIG_TMPFS_POSIX_ACL=y
+          CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y
+          EOF
+
+          grep -q '^CONFIG_LOCALVERSION="-android16-5-g75e9b1c7ae7c-abogki463945075-4k"$' "$DEF"
+          echo "✅ Config prepared for Xiaomi 17 Pro Max stock KMI/release"
+
+      - name: Build 6.12.23 Image
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform"
+          export PATH="$ROOT/clang19/bin:$ROOT/build-tools/bin:$ROOT/rust/bin:$PATH"
+          export CC="$ROOT/clang19/bin/clang"
+          export HOSTCC="$ROOT/clang19/bin/clang"
+          export RUSTC=rustc
+          export BINDGEN=bindgen
+          export LIBCLANG_PATH="$ROOT/clang19/lib"
+          export LLVM=1 LLVM_IAS=1 ARCH=arm64 SUBARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export LD=ld.lld HOSTLD=ld.lld AR=llvm-ar NM=llvm-nm
+          export OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip
+
+          cd "$ROOT/common"
+          make O=out ARCH=arm64 LLVM=1 gki_defconfig
+          make -j"$(nproc)" O=out ARCH=arm64 LLVM=1 \
+            CC="$CC" HOSTCC="$HOSTCC" LD=ld.lld HOSTLD=ld.lld \
+            RUSTC="$RUSTC" BINDGEN="$BINDGEN" Image
+
+          test -s out/arch/arm64/boot/Image
+          RELEASE="$(make -s O=out ARCH=arm64 LLVM=1 kernelrelease)"
+          echo "Built release: $RELEASE"
+          [ "$RELEASE" = "$STOCK_UNAME" ] || { echo "❌ release mismatch"; exit 16; }
+
+          mkdir -p "$ROOT/out/Final-Image-Find"
+          cp out/arch/arm64/boot/Image "$ROOT/out/Final-Image-Find/Image"
+          echo "✅ Kernel Image built"
+
+      - name: Apply KPM
+        run: |
+          set -euo pipefail
+          OUT="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/out/Final-Image-Find"
+          KPM="$GITHUB_WORKSPACE/kernel_workspace/SukiSU_patch/kpm/patch_linux"
+          test -x "$KPM" || chmod +x "$KPM"
+          cd "$OUT"
+          cp "$KPM" ./patch_linux
+          chmod +x patch_linux
+          ./patch_linux
+          test -s oImage
+          mv -f oImage Image
+          echo "✅ KPM applied"
+
+      - name: Build Xiaomi AK3 package
+        run: |
+          set -euo pipefail
+          git clone --depth=1 https://github.com/Numbersf/AnyKernel3 AnyKernel3
+          rm -rf AnyKernel3/.git
+          cp "$GITHUB_WORKSPACE/templates/anykernel_xiaomi17promax.sh" AnyKernel3/anykernel.sh
+
+          sed -i 's|__TARGET__|Xiaomi 17 Pro Max (popsicle)|g' AnyKernel3/anykernel.sh
+          sed -i 's|__KERNEL__|6.12.23|g' AnyKernel3/anykernel.sh
+          sed -i 's|__KERNEL_MM__|6.12|g' AnyKernel3/anykernel.sh
+          sed -i 's|__KERNEL_PREFIX__|6.12.23-android16-5|g' AnyKernel3/anykernel.sh
+          sed -i 's|__DEVICE_ID__|popsicle|g' AnyKernel3/anykernel.sh
+          sed -i "s|__FORCED_UNAME__|$STOCK_UNAME|g" AnyKernel3/anykernel.sh
+          sed -i "s|__UNICODE__|${XIAOMO_UNICODE_DISPLAY}|g" AnyKernel3/anykernel.sh
+          sed -i "s|__FUSE_BPF__|${XIAOMO_FUSE_BPF_DISPLAY}|g" AnyKernel3/anykernel.sh
+
+          if grep -Eq '__TARGET__|__KERNEL__|__KERNEL_MM__|__KERNEL_PREFIX__|__DEVICE_ID__|__FORCED_UNAME__|__UNICODE__|__FUSE_BPF__' AnyKernel3/anykernel.sh; then
+            echo "❌ AK3 placeholder remains"
+            exit 17
+          fi
+          dash -n AnyKernel3/anykernel.sh
+          sh -n AnyKernel3/anykernel.sh
+
+          cp kernel_workspace/kernel_platform/out/Final-Image-Find/Image AnyKernel3/Image
+
+          {
+            echo "TARGET=Xiaomi 17 Pro Max"
+            echo "CODENAME=popsicle"
+            echo "ANDROID=16"
+            echo "KERNEL_BASE=6.12.23"
+            echo "STOCK_UNAME=$STOCK_UNAME"
+            echo "ACK_TAG=$ACK_TAG"
+            echo "ACK_SHA=$ACK_SHA"
+            echo "SUKISU_ULTRA=40959"
+            echo "SUSFS=2.3.0"
+            echo "KPM=enabled"
+            echo "UNICODE_STATUS=${XIAOMO_UNICODE_STATUS}"
+            echo "UNICODE_SOURCE=${XIAOMO_UNICODE_SOURCE}"
+            echo "FUSE_NAME_FILTER_STATUS=${XIAOMO_FUSE_NAME_FILTER_STATUS}"
+            echo "FUSE_NAME_FILTER_SOURCE=${XIAOMO_FUSE_NAME_FILTER_SOURCE}"
+            echo "FUSE_READDIR_GUARD_STATUS=${XIAOMO_FUSE_READDIR_GUARD_STATUS}"
+            echo "FUSE_READDIR_GUARD_SOURCE=${XIAOMO_FUSE_READDIR_GUARD_SOURCE}"
+            echo "FUSE_BPF_STATUS=${XIAOMO_FUSE_BPF_STATUS}"
+            echo "FUSE_BPF_SOURCE=${XIAOMO_FUSE_BPF_SOURCE}"
+            echo "NOTE=Public Xiaomi ACK r8 source is used; stock g75e9... source revision is not publicly resolved."
+          } > AnyKernel3/storage-fix-status.txt
+
+          curl -fL --retry 3 -o ksu_module_susfs.zip \
+            https://github.com/LingLuo17/AnyKernel3/releases/download/v2.3.0-r15/ksu_module_susfs.zip
+          echo "abcd6bf456ea8189298d9e496faa440201d90e4f0bd93b83c0527589001c9376  ksu_module_susfs.zip" | sha256sum -c -
+          unzip -t ksu_module_susfs.zip >/dev/null
+          cp ksu_module_susfs.zip AnyKernel3/
+
+          test -s AnyKernel3/Image
+          echo "✅ Xiaomi 17 Pro Max AK3 ready"
+
+      - name: Upload Xiaomi 17 Pro Max AK3
+        uses: actions/upload-artifact@v7
+        with:
+          name: Xiaomi17ProMax_SukiSUUltra_40959_6.12.23_KPM_ILH
+          path: AnyKernel3/*
+          retention-days: 7
+          compression-level: 9
