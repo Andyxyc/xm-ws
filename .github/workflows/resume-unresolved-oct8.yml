@@ -1,0 +1,171 @@
+name: Resume Unresolved OnePlus Builds
+run-name: resume-unresolved-${{ github.run_id }}
+
+on:
+  push:
+    branches: [SukiSU-Ultra]
+    paths: [.github/workflows/resume-unresolved-oct8.yml]
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: xm-unresolved-oct8
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    if: github.repository == 'Andyxyc/xm-ws'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Dispatch unresolved models
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y python3-yaml
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+          import time
+          import yaml
+
+          repo = os.environ['GITHUB_REPOSITORY']
+          ref = 'SukiSU-Ultra'
+          sha = os.environ['GITHUB_SHA']
+          workflow = 'Build Kernel OnePlus.yml'
+
+          # 2026-10-08: only rebuild the configs that were not left with a
+          # successful artifact in the previous 51-device run. 13T remains
+          # explicitly deferred by owner request.
+          targets = [
+              'oneplus_nord_n30_se_5g_v',
+              'oneplus_n6x_b',
+              'oneplus_nord_4_b',
+              'oneplus_nord_ce5_b',
+              'oneplus_ace5_race_b',
+              'oneplus_15t',
+              'oneplus_pad_4',
+              'oneplus_ace6_ultra',
+          ]
+
+          doc = yaml.load((Path('.github/workflows') / workflow).read_text(encoding='utf-8'),
+                          Loader=yaml.BaseLoader)
+          fields = doc['on']['workflow_dispatch']['inputs']
+          devices = fields['FILE']['options']
+          unknown = [x for x in targets if x not in devices]
+          if unknown:
+              raise SystemExit('Unknown targets: ' + ', '.join(unknown))
+          if 'oneplus_13t_b' in targets:
+              raise SystemExit('13T is deferred and must not be dispatched.')
+
+          values = {key: value.get('default', '') for key, value in fields.items()}
+          values.update(
+              SUSFS_CI='Release',
+              KPM='KPM',
+              SUSFS_META='',
+              BUILD_TIME='-1',
+              SOURCE_PROFILE='',
+              KSU_META='main/builtin/xiaomo/70fa0e092a2c81060823f8ae526eac14fdda2930',
+              LZ4_UPDATE='false',
+              ZRAM='0/lz4kd/8589934592',
+              SUFFIX='-1',
+              FAST_BUILD='true',
+              LSM_BBG='false',
+              NETFILTER='true',
+              CCM='false',
+              UNICODE_BYPASS='true',
+              SCHED_HMBIRD='true',
+              DROID_SPACES='false',
+              RE_KERNEL='false',
+              SUSFS_DEV='false',
+              SPACE_NOCLEAN='false',
+              BUILD_NOCACHE='false',
+          )
+
+          def api(path, method='GET', payload=None):
+              args = [
+                  'gh', 'api', path,
+                  '-H', 'Accept: application/vnd.github+json',
+                  '-H', 'X-GitHub-Api-Version: 2022-11-28',
+              ]
+              data = None
+              if method != 'GET':
+                  args += ['--method', method]
+              if payload is not None:
+                  args += ['--input', '-']
+                  data = json.dumps(payload)
+              result = subprocess.run(args, input=data, capture_output=True, text=True, timeout=90)
+              if result.returncode:
+                  raise RuntimeError(result.stderr[-2000:])
+              return json.loads(result.stdout) if result.stdout.strip() else {}
+
+          actual = api(f'repos/{repo}/branches/{ref}')['commit']['sha']
+          if actual != sha:
+              raise SystemExit('Branch moved before dispatch; refusing mixed-source builds.')
+
+          out = Path('batch-receipts')
+          out.mkdir(exist_ok=True)
+          receipt = {
+              'controller_run': os.environ['GITHUB_RUN_ID'],
+              'head_sha': sha,
+              'targets': targets,
+              'hmbird_policy': 'preserve native/source HMBIRD; apply model patch only when source HMBIRD is absent',
+              'runs': [],
+          }
+          receipt_path = out / 'unresolved-oct8.json'
+
+          def save():
+              receipt_path.write_text(json.dumps(receipt, ensure_ascii=False, indent=2),
+                                      encoding='utf-8')
+
+          save()
+          for idx, device in enumerate(targets, 1):
+              current = api(f'repos/{repo}/branches/{ref}')['commit']['sha']
+              if current != sha:
+                  raise RuntimeError('Branch changed during dispatch; stopping.')
+              payload = {
+                  'ref': ref,
+                  'inputs': dict(values, FILE=device),
+                  'return_run_details': True,
+              }
+              response = api(
+                  f'repos/{repo}/actions/workflows/Build%20Kernel%20OnePlus.yml/dispatches',
+                  method='POST',
+                  payload=payload,
+              )
+              run_id = response.get('workflow_run_id')
+              if type(run_id) is not int or run_id <= 0:
+                  raise RuntimeError(f'Missing run id for {device}')
+              record = {
+                  'device': device,
+                  'run_id': run_id,
+                  'url': response.get('html_url'),
+              }
+              receipt['runs'].append(record)
+              save()
+              print(f'[{idx}/{len(targets)}] {device}: {run_id}', flush=True)
+              time.sleep(2)
+
+          print('All unresolved OnePlus builds dispatched.', flush=True)
+          PY
+
+      - name: Keep receipts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: unresolved-oct8-${{ github.run_id }}
+          path: batch-receipts/
+          if-no-files-found: warn
+          retention-days: 7
