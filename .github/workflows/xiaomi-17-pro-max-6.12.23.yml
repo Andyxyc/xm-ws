@@ -263,7 +263,7 @@ jobs:
           set -euo pipefail
           ROOT="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform"
           DEF="$ROOT/common/arch/arm64/configs/gki_defconfig"
-          LV="-android16-Kokuban-SilverWolf-SukiSUUltra-g${MI17_BASE_SHORT}-4k"
+          LV="-android16-Kokuban-XM17PM-g3b4e958-4k"
 
           # Preserve the historical Xiaomi 17 full defconfig; only set our release label.
           if grep -q '^CONFIG_LOCALVERSION=' "$DEF"; then
@@ -330,7 +330,7 @@ jobs:
           RELEASE="$(make -s O=out ARCH=arm64 LLVM=1 kernelrelease)"
           echo "Built release: $RELEASE"
           case "$RELEASE" in
-            6.12.23-android16-Kokuban-SilverWolf-SukiSUUltra-g${MI17_BASE_SHORT}-4k) ;;
+            6.12.23-android16-Kokuban-XM17PM-g3b4e958-4k) ;;
             *)
               echo "❌ unexpected Kokuban release: $RELEASE"
               exit 18
