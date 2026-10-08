@@ -1034,23 +1034,21 @@ jobs:
         if: ${{ github.event.inputs.UNICODE_BYPASS == 'true' && (github.event.inputs.FILE == 'oneplus_pad_pro_b' || github.event.inputs.FILE == 'oneplus_pad_pro_v') }}
         run: |
           set -euo pipefail
-          PATCH_DIR="${GITHUB_WORKSPACE}/kernel_workspace/Action-Build/patches"
-          PATCH_FILE="${PATCH_DIR}/fuse_default_ignorable_lookup_6.1.patch"
+          APPLY_SCRIPT="${GITHUB_WORKSPACE}/kernel_workspace/Action-Build/scripts/padpro_fuse_name_filter.py"
           cd kernel_workspace/kernel_platform/common
 
           if [ "${VERSIONLEVEL}" -ne 6 ] || [ "${PATCHLEVEL}" -ne 1 ]; then
             echo "❌ FUSE lookup-name filter is pinned to Linux 6.1; got ${VERSIONLEVEL}.${PATCHLEVEL}"
             exit 1
           fi
-          test -f "$PATCH_FILE"
+          test -f "$APPLY_SCRIPT"
           test -f fs/fuse/dir.c
           test -f fs/fuse/backing.c
           test -f fs/fuse/fuse_i.h
           grep -qF 'CONFIG_FUSE_BPF=y' arch/arm64/configs/gki_defconfig
           grep -qF 'fuse_lookup_init(fm->fc, &args, nodeid, name, outarg, &bpf_arg.out);' fs/fuse/dir.c
 
-          patch -p1 --dry-run --forward --fuzz=0 < "$PATCH_FILE"
-          patch -p1 --forward --fuzz=0 < "$PATCH_FILE"
+          python3 "$APPLY_SCRIPT" .
 
           grep -qF 'fuse_default_ignorable_code_point' fs/fuse/dir.c
           grep -qF 'fuse_filter_lookup_name' fs/fuse/dir.c
