@@ -1,0 +1,248 @@
+name: Xiaomi 17 KSU ABI Diff
+
+run-name: Xiaomi17-KSU-ABI-Diff-${{ github.run_id }}
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [SukiSU-Ultra]
+    paths:
+      - .github/workflows/xiaomi17-ksu-abi-diff.yml
+      - scripts/ksu_uapi_sync/**
+      - scripts/sukisu_compat/**
+
+permissions:
+  actions: write
+  contents: read
+
+env:
+  TZ: Asia/Shanghai
+  KSU_PIN: 70fa0e092a2c81060823f8ae526eac14fdda2930
+  BAKA_PIN: 1bfed00f597e65700d70fee0feb1d424fc21a2e5
+  STOCK_SUFFIX: android16-5-g75e9b1c7ae7c-abogki463945075-4k
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [baka, suki]
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Fetch and patch cctv18 builder
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 \
+            https://raw.githubusercontent.com/cctv18/oppo_oplus_realme_sm8850/main/local/builder_6.12.23.sh \
+            -o cctv18-builder.sh
+          chmod +x cctv18-builder.sh
+
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path("cctv18-builder.sh")
+          s=p.read_text()
+          s=s.replace(
+              'SU apt-mark hold firefox && apt-mark hold libc-bin && apt-mark hold man-db',
+              'SU apt-mark hold firefox; SU apt-mark hold libc-bin; SU apt-mark hold man-db'
+          )
+          start=s.index('if [[ $KSU_BRANCH == [yYrR] ]]; then')
+          end=s.index('elif [[ "$KSU_BRANCH" == "n" || "$KSU_BRANCH" == "N" ]]; then', start)
+
+          replacement=r'''if [[ "$KSU_BRANCH" == "y" || "$KSU_BRANCH" == "Y" ]]; then
+            echo ">>> ABI-DIFF: true SukiSU Ultra 40959"
+            curl -fLSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/${KSU_PIN}/kernel/setup.sh" | bash -s builtin
+            git -C KernelSU fetch origin "${KSU_PIN}" --depth=1
+            git -C KernelSU checkout --detach "${KSU_PIN}"
+            test "$(git -C KernelSU rev-parse HEAD)" = "${KSU_PIN}"
+            sed -i 's|^KSU_VERSION     := .*|KSU_VERSION     := 40959|' KernelSU/kernel/Makefile
+            sed -i 's|^VERSION_TAG     := .*|VERSION_TAG     := 4.2.0|' KernelSU/kernel/Makefile
+            if grep -q '^KSU_VERSION_FULL := ' KernelSU/kernel/Makefile; then
+              sed -i 's|^KSU_VERSION_FULL := .*|KSU_VERSION_FULL := v4.2.0-xiaomo@builtin[70fa0e09]|' KernelSU/kernel/Makefile
+            fi
+            UAPI_FILE=""
+            for f in KernelSU/kernel/include/uapi/supercall.h KernelSU/uapi/supercall.h; do
+              [ -f "$f" ] && { UAPI_FILE="$f"; break; }
+            done
+            if [ -n "$UAPI_FILE" ]; then
+              read_uapi() {
+                grep -ohE 'KERNEL_SU_UAPI_VERSION[^0-9]*[0-9]+' "$UAPI_FILE" | grep -oE '[0-9]+' | tail -n1
+              }
+              CURRENT_UAPI="$(read_uapi || true)"
+              if [ "${CURRENT_UAPI:-0}" -lt 5 ]; then
+                patch -p1 --forward -d KernelSU < "$GITHUB_WORKSPACE/scripts/ksu_uapi_sync/builtin-uapi5.patch"
+              fi
+            fi
+            bash "$GITHUB_WORKSPACE/scripts/sukisu_compat/apply.sh" KernelSU
+            echo 'CONFIG_KSU_FULL_NAME_FORMAT="%TAG_NAME%-%COMMIT_SHA%@xiaomo"' >> ./common/arch/arm64/configs/gki_defconfig
+
+          elif [[ "$KSU_BRANCH" == "r" || "$KSU_BRANCH" == "R" ]]; then
+            echo ">>> ABI-DIFF: exact working BakaSU 35215 baseline"
+            curl -fLSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/main/kernel/setup.sh" | bash -s main
+            git -C KernelSU fetch origin "${BAKA_PIN}" --depth=1
+            git -C KernelSU checkout --detach "${BAKA_PIN}"
+            test "$(git -C KernelSU rev-parse HEAD)" = "${BAKA_PIN}"
+            echo 'CONFIG_KSU_FULL_NAME_FORMAT="%TAG_NAME%-%COMMIT_SHA%@cctv18"' >> ./common/arch/arm64/configs/gki_defconfig
+          '''
+          p.write_text(s[:start]+replacement+s[end:])
+          PY
+
+          bash -n cctv18-builder.sh
+
+      - name: Build identical profile
+        env:
+          MANIFEST: Xiaomi17ABIDiff
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.variant }}" = "baka" ]; then
+            KSU_CHOICE=r
+          else
+            KSU_CHOICE=y
+          fi
+
+          printf '%s\n' \
+            "$STOCK_SUFFIX" \
+            "y" \
+            "n" \
+            "$KSU_CHOICE" \
+            "y" \
+            "n" \
+            "n" \
+            "n" \
+            "n" \
+            "y" \
+            "n" \
+            "y" \
+            | bash ./cctv18-builder.sh
+
+      - name: Collect ABI evidence
+        run: |
+          set -euo pipefail
+          VARIANT="${{ matrix.variant }}"
+          OUT="abi-$VARIANT"
+          mkdir -p "$OUT"
+
+          cp kernel_workspace/common/out/.config "$OUT/config.txt"
+          cp kernel_workspace/common/out/vmlinux.symvers "$OUT/vmlinux.symvers"
+          cp kernel_workspace/common/out/Module.symvers "$OUT/Module.symvers" 2>/dev/null || true
+          cp kernel_workspace/common/out/arch/arm64/boot/Image "$OUT/Image"
+
+          strings -a "$OUT/Image" | grep -m1 '^Linux version ' > "$OUT/linux-version.txt"
+          sha256sum "$OUT/Image" "$OUT/vmlinux.symvers" > "$OUT/SHA256SUMS.txt"
+
+          grep -E '^(CONFIG_(KSU|KSU_SUSFS|MODVERSIONS|GKI_TASK_STRUCT_VENDOR_SIZE_MAX|LTO_|FUSE_BPF|BBG|MQ_IOSCHED_ADIOS))' "$OUT/config.txt" > "$OUT/critical-config.txt" || true
+          echo "✅ collected $VARIANT ABI evidence"
+
+      - name: Upload ABI evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: xiaomi17-abi-${{ matrix.variant }}
+          path: abi-${{ matrix.variant }}/*
+          retention-days: 7
+          compression-level: 9
+
+  compare:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download Baka ABI
+        uses: actions/download-artifact@v8
+        with:
+          name: xiaomi17-abi-baka
+          path: baka
+
+      - name: Download Suki ABI
+        uses: actions/download-artifact@v8
+        with:
+          name: xiaomi17-abi-suki
+          path: suki
+
+      - name: Compare exported symbol CRCs
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def parse(p):
+              out={}
+              for line in Path(p).read_text(errors="replace").splitlines():
+                  f=line.split("\t")
+                  if len(f) >= 2:
+                      out[f[1]]=f[0].lower()
+              return out
+
+          b=parse("baka/vmlinux.symvers")
+          s=parse("suki/vmlinux.symvers")
+
+          common=set(b)&set(s)
+          crc=[(x,b[x],s[x]) for x in sorted(common) if b[x] != s[x]]
+          missing=sorted(set(b)-set(s))
+          extra=sorted(set(s)-set(b))
+
+          def ksuish(x):
+              y=x.lower()
+              return (
+                  y.startswith("ksu_") or y.startswith("susfs_") or
+                  "kernelsu" in y or y.startswith("__ksu_")
+              )
+
+          crc_core=[x for x in crc if not ksuish(x[0])]
+          missing_core=[x for x in missing if not ksuish(x)]
+          extra_core=[x for x in extra if not ksuish(x)]
+
+          lines=[]
+          lines.append(f"Baka exports: {len(b)}")
+          lines.append(f"Suki exports: {len(s)}")
+          lines.append(f"CRC mismatches total: {len(crc)}")
+          lines.append(f"CRC mismatches non-KSU: {len(crc_core)}")
+          lines.append(f"Missing from Suki total: {len(missing)}")
+          lines.append(f"Missing from Suki non-KSU: {len(missing_core)}")
+          lines.append(f"Extra in Suki total: {len(extra)}")
+          lines.append(f"Extra in Suki non-KSU: {len(extra_core)}")
+          lines.append("")
+
+          for sym in ["module_layout","vendor_data_pad","security_inode_permission","security_file_open","vfs_statx","do_filp_open"]:
+              lines.append(f"{sym}: baka={b.get(sym)} suki={s.get(sym)}")
+          lines.append("")
+
+          if crc_core:
+              lines.append("NON-KSU CRC MISMATCHES:")
+              for x,a,z in crc_core[:200]:
+                  lines.append(f"  {x}: {a} -> {z}")
+          if missing_core:
+              lines.append("NON-KSU MISSING FROM SUKI:")
+              for x in missing_core[:200]:
+                  lines.append(f"  {x}")
+          if extra_core:
+              lines.append("NON-KSU EXTRA IN SUKI:")
+              for x in extra_core[:200]:
+                  lines.append(f"  {x}")
+
+          Path("abi-diff-report.txt").write_text("\n".join(lines)+"\n")
+          print("\n".join(lines))
+
+          if crc_core or missing_core:
+              print("RESULT=ABI_DRIFT")
+          else:
+              print("RESULT=NO_CORE_CRC_DRIFT")
+          PY
+
+          echo "----- BAKA VERSION -----"
+          cat baka/linux-version.txt
+          echo "----- SUKI VERSION -----"
+          cat suki/linux-version.txt
+          echo "----- CRITICAL CONFIG DIFF -----"
+          diff -u baka/critical-config.txt suki/critical-config.txt || true
+
+      - name: Upload ABI diff report
+        uses: actions/upload-artifact@v7
+        with:
+          name: Xiaomi17_Suki_vs_Baka_ABI_DIFF
+          path: abi-diff-report.txt
+          retention-days: 7
+          compression-level: 9
