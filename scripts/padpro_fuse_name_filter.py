@@ -100,7 +100,7 @@ dir_c = replace_once(
     dir_c,
     "\t\tstruct fuse_forget_link *forget;\n\t\tu64 attr_version;\n",
     "\t\tstruct fuse_forget_link *forget;\n\t\tu64 attr_version;\n"
-    "\t\tchar filtered_name[FUSE_NAME_MAX + 1];\n"
+    "\t\tchar *filtered_name = NULL;\n"
     "\t\tstruct qstr lookup_name = entry->d_name;\n",
     "revalidate scratch buffer",
 )
@@ -109,12 +109,29 @@ dir_c = replace_once(
     dir_c,
     "\t\tfuse_lookup_init(fm->fc, &args, get_node_id(d_inode(parent)),\n"
     "\t\t\t\t &entry->d_name, &outarg, &bpf_arg.out);",
+    "\t\tfiltered_name = kmalloc(FUSE_NAME_MAX + 1, GFP_KERNEL);\n"
+    "\t\tif (!filtered_name) {\n"
+    "\t\t\tkfree(forget);\n"
+    "\t\t\tdput(parent);\n"
+    "\t\t\tret = -ENOMEM;\n"
+    "\t\t\tgoto out;\n"
+    "\t\t}\n"
     "\t\tlookup_name.len = fuse_filter_lookup_name(entry->d_name.name,\n"
-    "\t\t\t\tentry->d_name.len, filtered_name, sizeof(filtered_name));\n"
+    "\t\t\t\tentry->d_name.len, filtered_name, FUSE_NAME_MAX + 1);\n"
     "\t\tlookup_name.name = filtered_name;\n\n"
     "\t\tfuse_lookup_init(fm->fc, &args, get_node_id(d_inode(parent)),\n"
     "\t\t\t\t &lookup_name, &outarg, &bpf_arg.out);",
     "revalidate filtered lookup",
+)
+
+dir_c = replace_once(
+    dir_c,
+    "\t\tret = fuse_simple_request(fm, &args);\n"
+    "\t\tdput(parent);",
+    "\t\tret = fuse_simple_request(fm, &args);\n"
+    "\t\tkfree(filtered_name);\n"
+    "\t\tdput(parent);",
+    "revalidate filtered buffer free",
 )
 
 dir_c = replace_once(
