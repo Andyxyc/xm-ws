@@ -89,7 +89,8 @@ new = """\t\t.in_args[0] = (struct fuse_bpf_in_arg) {
 \t\t\t.size = fli->filtered_name_len != (size_t)-1 ?
 \t\t\t\tfli->filtered_name_len + 1 : entry->d_name.len + 1,
 \t\t\t.value = fli->filtered_name_len != (size_t)-1 ?
-\t\t\t\tfli->filtered_name : entry->d_name.name,
+\t\t\t\t(const void *)fli->filtered_name :
+\t\t\t\t(const void *)entry->d_name.name,
 \t\t},
 """
 back = replace_once(back, old, new, "bpf raw-name fallback")
