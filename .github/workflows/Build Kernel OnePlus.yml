@@ -11,20 +11,46 @@ on:
           - oneplus_nord_n30_se_5g_v
           - oneplus_10r_v
           - oneplus_nord_3_b
+          - oneplus_ace_t
+          - oneplus_ace_u
           - oneplus_ace_v
+          - oneplus_ace_race_u
           - oneplus_ace_race_v
+          - oneplus_ace_pro_v
+          - oneplus_ace2_v
+          - oneplus_ace2_b
+          - oneplus_ace_2v_v
+          - oneplus_ace_2v_b
+          - oneplus_ace2_pro_v
+          - oneplus_ace2_pro_b
+          - oneplus_ace3_v
+          - oneplus_ace3_b
+          - oneplus_ace_3v_v
+          - oneplus_ace_3v_b
+          - oneplus_ace3_pro
+          - oneplus_ace3_pro_v
+          - oneplus_ace3_pro_b
+          - oneplus_ace5
+          - oneplus_ace5_b
+          - oneplus_ace5_pro
+          - oneplus_ace5_pro_b
+          - oneplus_ace5_race
+          - oneplus_ace5_race_b
+          - oneplus_ace5_ultra
+          - oneplus_ace5_ultra_b
+          - oneplus_ace5_ultra_bak_b
+          - oneplus_ace_6
+          - oneplus_ace_6t
+          - oneplus_ace_6t_Canary
+          - oneplus_ace6_ultra
+          - oneplus_ace6_ultra_Canary
           - oneplus_10_pro_b
           - oneplus_10t_v
           - oneplus_11r_b
-          - oneplus_ace2_b
           - oneplus_pad_lite_b
           - oneplus_pad_mt6983_b
-          - oneplus_ace_2v_b
-          - oneplus_ace_pro_v
           - oneplus_11_b
           - oneplus_12r_b
-          - oneplus_ace2_pro_b
-          - oneplus_ace3_b
           - oneplus_open_b
           - oneplus_nord_ce4_b
           - oneplus_n6_b
@@ -37,35 +63,26 @@ on:
           - oneplus_nord_ce6_lite_b
           - oneplus_turbo_6v
           - oneplus_nord_4_b
-          - oneplus_ace_3v_b
           - oneplus_pad_mt6897_b
           - oneplus_13r_b
-          - oneplus_ace3_pro_b
-          - oneplus_ace5_b
           - oneplus_pad_pro_v
           - oneplus_pad_pro_b
           - oneplus_pad2_b
           - oneplus_nord_ce5_b
           - oneplus_nord_5_b
-          - oneplus_ace5_pro_b
           - oneplus_13_b
           - oneplus_13t_b
           - oneplus_13s_b
           - oneplus_pad_2_pro_b
           - oneplus_pad_3_b
-          - oneplus_ace5_race_b
-          - oneplus_ace5_ultra_b
           - oneplus_pad2_mt6991_b
-          - oneplus_ace_6
           - oneplus_turbo_6
           - oneplus_nord_6
-          - oneplus_ace_6t
           - oneplus_15r
           - oneplus_15
           - oneplus_15t
           - oneplus_pad_3_pro
           - oneplus_pad_4
-          - oneplus_ace6_ultra
       SUSFS_CI:
         type: choice
         description: "SUSFS module source"
