@@ -1,0 +1,240 @@
+name: OnePlus Ace Full Series Batch
+run-name: ace-full-series-${{ github.run_id }}
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [SukiSU-Ultra]
+    paths:
+      - .github/workflows/ace-all-series.yml
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: oneplus-ace-full-series
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    if: github.repository == 'Andyxyc/xm-ws'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Dispatch all Ace generations and source versions
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y python3-yaml
+
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+          import time
+          import yaml
+
+          repo = os.environ['GITHUB_REPOSITORY']
+          ref = 'SukiSU-Ultra'
+          sha = os.environ['GITHUB_SHA']
+          workflow = 'Build Kernel OnePlus.yml'
+
+          # Full OnePlus Ace family matrix.
+          # Suffix convention from the manifest sources:
+          # t/u/v/b = progressively newer Android/source generations.
+          # no suffix = current release manifest; Canary = latest experimental update.
+          targets = [
+              # Ace / Ace Racing
+              'oneplus_ace_t',
+              'oneplus_ace_u',
+              'oneplus_ace_v',
+              'oneplus_ace_race_u',
+              'oneplus_ace_race_v',
+
+              # Ace Pro / Ace 2 / Ace 2V / Ace 2 Pro
+              'oneplus_ace_pro_v',
+              'oneplus_ace2_v',
+              'oneplus_ace2_b',
+              'oneplus_ace_2v_v',
+              'oneplus_ace_2v_b',
+              'oneplus_ace2_pro_v',
+              'oneplus_ace2_pro_b',
+
+              # Ace 3 / Ace 3V / Ace 3 Pro
+              'oneplus_ace3_v',
+              'oneplus_ace3_b',
+              'oneplus_ace_3v_v',
+              'oneplus_ace_3v_b',
+              'oneplus_ace3_pro',
+              'oneplus_ace3_pro_v',
+              'oneplus_ace3_pro_b',
+
+              # Ace 5 family
+              'oneplus_ace5',
+              'oneplus_ace5_b',
+              'oneplus_ace5_pro',
+              'oneplus_ace5_pro_b',
+              'oneplus_ace5_race',
+              'oneplus_ace5_race_b',
+              'oneplus_ace5_ultra',
+              'oneplus_ace5_ultra_b',
+              'oneplus_ace5_ultra_bak_b',
+
+              # Ace 6 family
+              'oneplus_ace_6',
+              'oneplus_ace_6t',
+              'oneplus_ace_6t_Canary',
+              'oneplus_ace6_ultra',
+              'oneplus_ace6_ultra_Canary',
+          ]
+
+          doc = yaml.load((Path('.github/workflows') / workflow).read_text(encoding='utf-8'),
+                          Loader=yaml.BaseLoader)
+          fields = doc['on']['workflow_dispatch']['inputs']
+          options = fields['FILE']['options']
+          missing = [x for x in targets if x not in options]
+          if missing:
+              raise SystemExit('Ace configs missing from FILE options: ' + ', '.join(missing))
+          if len(targets) != 33 or len(set(targets)) != 33:
+              raise SystemExit('Ace target matrix count/uniqueness regression.')
+
+          # Keep the exact same build profile used by the previous OnePlus batch.
+          values = {key: value.get('default', '') for key, value in fields.items()}
+          values.update(
+              SUSFS_CI='Release',
+              KPM='KPM',
+              SUSFS_META='',
+              DYNAMIC_REPO='Numbersf',
+              BUILD_TIME='-1',
+              SOURCE_PROFILE='',
+              KSU_META='main/builtin/xiaomo/70fa0e092a2c81060823f8ae526eac14fdda2930',
+              LZ4_UPDATE='false',
+              ZRAM='0/lz4kd/8589934592',
+              SUFFIX='-1',
+              RESUBLEVEL='',
+              FAST_BUILD='true',
+              LSM_BBG='false',
+              NETFILTER='true',
+              CCM='false',
+              UNICODE_BYPASS='true',
+              SCHED_HMBIRD='true',
+              DROID_SPACES='false',
+              RE_KERNEL='false',
+              SUSFS_DEV='false',
+              SPACE_NOCLEAN='false',
+              BUILD_NOCACHE='false',
+          )
+
+          def api(path, method='GET', payload=None):
+              args = [
+                  'gh', 'api', path,
+                  '-H', 'Accept: application/vnd.github+json',
+                  '-H', 'X-GitHub-Api-Version: 2022-11-28',
+              ]
+              data = None
+              if method != 'GET':
+                  args += ['--method', method]
+              if payload is not None:
+                  args += ['--input', '-']
+                  data = json.dumps(payload)
+              result = subprocess.run(
+                  args, input=data, capture_output=True, text=True, timeout=90
+              )
+              if result.returncode:
+                  raise RuntimeError(
+                      f'GitHub API failed ({result.returncode}): {result.stderr[-2000:]}'
+                  )
+              return json.loads(result.stdout) if result.stdout.strip() else {}
+
+          actual = api(f'repos/{repo}/branches/{ref}')['commit']['sha']
+          if actual != sha:
+              raise SystemExit(
+                  f'Branch moved before Ace dispatch: expected {sha}, got {actual}'
+              )
+
+          receipt_dir = Path('ace-batch-receipts')
+          receipt_dir.mkdir(exist_ok=True)
+          receipt_path = receipt_dir / 'runs.json'
+          receipt = {
+              'controller_run': os.environ['GITHUB_RUN_ID'],
+              'head_sha': sha,
+              'profile': {
+                  'sukisu': '40959 / 70fa0e092a2c81060823f8ae526eac14fdda2930',
+                  'susfs': 'Release / 2.3.x pipeline',
+                  'kpm': 'KPM',
+                  'unicode_bypass': True,
+                  'hmbird_auto': True,
+                  'netfilter': True,
+                  'bbg': False,
+                  'zram': False,
+                  'droidspaces': False,
+                  'rekernel': False,
+              },
+              'targets': targets,
+              'runs': [],
+          }
+
+          def save():
+              tmp = receipt_path.with_suffix('.tmp')
+              tmp.write_text(json.dumps(receipt, ensure_ascii=False, indent=2),
+                             encoding='utf-8')
+              tmp.replace(receipt_path)
+
+          save()
+
+          for idx, device in enumerate(targets, 1):
+              # Prevent mixing multiple source heads into one batch.
+              current = api(f'repos/{repo}/branches/{ref}')['commit']['sha']
+              if current != sha:
+                  raise RuntimeError(
+                      f'Branch changed during Ace dispatch at {device}; stopping.'
+                  )
+
+              payload = {
+                  'ref': ref,
+                  'inputs': dict(values, FILE=device),
+                  'return_run_details': True,
+              }
+              response = api(
+                  f'repos/{repo}/actions/workflows/Build%20Kernel%20OnePlus.yml/dispatches',
+                  method='POST',
+                  payload=payload,
+              )
+              run_id = response.get('workflow_run_id')
+              if type(run_id) is not int or run_id <= 0:
+                  raise RuntimeError(f'Missing workflow run id for {device}')
+
+              rec = {
+                  'index': idx,
+                  'device': device,
+                  'run_id': run_id,
+                  'url': response.get('html_url'),
+                  'state': 'submitted',
+              }
+              receipt['runs'].append(rec)
+              save()
+              print(f'[{idx:02d}/{len(targets)}] {device}: {run_id}', flush=True)
+              time.sleep(2)
+
+          print(f'All {len(targets)} OnePlus Ace builds dispatched.', flush=True)
+          PY
+
+      - name: Upload dispatch receipts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ace-full-series-receipts-${{ github.run_id }}
+          path: ace-batch-receipts/
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 9
