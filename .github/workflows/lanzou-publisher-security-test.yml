@@ -169,3 +169,31 @@ jobs:
               assert len(session.requests)==1
           print('PASS: read-only LanZouCloud authentication accepts zt=1 only')
           PY
+
+      - name: Check same-origin upload endpoint remapping
+        run: |
+          python - <<'PY'
+          import runpy,sys,types
+          mod=types.ModuleType('lanzou')
+          api=types.ModuleType('lanzou.api')
+          class Base:
+              def __init__(self):
+                  self._headers={}
+                  self._timeout=5
+          api.LanZouCloud=Base
+          sys.modules['lanzou']=mod
+          sys.modules['lanzou.api']=api
+          obj=runpy.run_path('scripts/publish_lanzou_ak3.py')
+          client=obj['make_secure_client']()
+          calls=[]
+          client._safe_request=lambda method,url,**kwargs: calls.append(
+              (method,url,kwargs.get('data')))
+          client._post('https://pc.woozooo.com/fileup.php','payload')
+          client._post('https://pc.woozooo.com/doupload.php',{'task':47})
+          assert calls==[
+              ('POST','https://pc.woozooo.com/html5up.php','payload'),
+              ('POST','https://pc.woozooo.com/doupload.php',{'task':47})
+          ],calls
+          assert client._headers['User-Agent'].find('Chrome/119.')!=-1
+          print('PASS: upload URL updated, account API unchanged, UA modern')
+          PY
