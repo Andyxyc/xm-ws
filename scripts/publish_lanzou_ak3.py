@@ -165,6 +165,12 @@ def make_secure_client():
                         continue
                     response.raise_for_status()
                     return response
+                except requests.HTTPError as exc:
+                    # Log only the status and endpoint path. Never log
+                    # query strings, request bodies, cookies or response text.
+                    status = exc.response.status_code if exc.response is not None else 0
+                    endpoint = urlsplit(url).path
+                    raise PublishError(f"LanZouCloud HTTP {status} at {endpoint}") from exc
                 except requests.RequestException as exc:
                     raise PublishError(
                         f"LanZouCloud HTTPS failure: {type(exc).__name__}"
