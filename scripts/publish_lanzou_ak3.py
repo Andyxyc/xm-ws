@@ -56,10 +56,10 @@ def version_first_filename(old_filename: str) -> str:
     match = re.fullmatch(
         r"AnyKernel3_SukiSUUltra_40959_"
         r"(?P<model>OnePlus[A-Za-z0-9_-]{2,80})_"
-        r"Android(?P<android>\\d+(?:\\.\\d+){1,2})_"
-        r"(?P<kernel>\\d+\\.\\d+\\.\\d+)_+"
+        r"Android(?P<android>\d+(?:\.\d+){1,2})_"
+        r"(?P<kernel>\d+\.\d+\.\d+)_+"
         r"(?P<extras>[A-Za-z0-9_-]+)_"
-        r"run(?P<run>\\d+)\\.zip",
+        r"run(?P<run>\d+)\.zip",
         old_filename,
     )
     if match is None:
