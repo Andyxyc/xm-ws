@@ -1,0 +1,168 @@
+name: Ace5Pro Minimal SukiSU SUSFS Stability Trial
+
+on:
+  push:
+    branches: [SukiSU-Ultra]
+    paths:
+      - .github/workflows/ace5pro-susfs-minimal-trial.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ace5pro-susfs-minimal-trial
+  cancel-in-progress: false
+
+jobs:
+  build-minimal-ace5pro:
+    runs-on: ubuntu-latest
+    timeout-minutes: 85
+    steps:
+      - name: Checkout pinned prep and installer
+        uses: actions/checkout@v4
+        with:
+          ref: SukiSU-Ultra
+          persist-credentials: false
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Prepare reduced 6.6.66 source builder
+        run: |
+          set -euo pipefail
+          curl -fLSs --retry 3 \
+            https://raw.githubusercontent.com/cctv18/oppo_oplus_realme_sm8750/0d90ea459dd5013ba5b1cb2e1ebc8c6d1544d746/local/builder_6.6.66.sh \
+            -o ace5pro-minimal-builder.sh
+          python -m py_compile scripts/ace5pro_minimal_susfs_prepare.py
+          python scripts/ace5pro_minimal_susfs_prepare.py ace5pro-minimal-builder.sh
+          bash -n ace5pro-minimal-builder.sh
+          sh -n templates/ace5pro_minimal_susfs_anykernel.sh
+          echo "Validated pinned SukiSU40959 + core SUSFS; no KPM or vendor scheduler patch."
+
+      - name: Compile source-matched 6.6.66 with only core SukiSU and SUSFS
+        env:
+          MANIFEST: OnePlus_Ace5Pro_PKR110_Android16_TEST
+        run: |
+          set -euo pipefail
+          # Input order matches pinned builder prompts, all optional patches OFF:
+          # 1 kernel suffix; 2 SUSFS; 3 KPM; 4 pinned SukiSU;
+          # 5 LZ4/ZSTD; 6 LZ4KD; 7 network; 8 BBR; 9 DroidSpaces;
+          # 10 ADIOS; 11 RE-Kernel; 12 BBG.
+          printf '%s\n' \
+            'android15-8-g29d86c5fc9dd-abogki428889875-4k' \
+            'y' \
+            'n' \
+            'y' \
+            'n' \
+            'n' \
+            'n' \
+            'n' \
+            'n' \
+            'n' \
+            'n' \
+            'n' \
+            | bash ./ace5pro-minimal-builder.sh
+
+      - name: Check final image identity and actually enabled kernel options
+        run: |
+          set -euo pipefail
+          COMMON="$GITHUB_WORKSPACE/kernel_workspace/common"
+          OUT="$COMMON/out"
+          IMAGE="$OUT/arch/arm64/boot/Image"
+          test -s "$IMAGE"
+          test "$(stat -c %s "$IMAGE")" -gt 6000000
+          test -s "$OUT/.config"
+          test -s "$GITHUB_WORKSPACE/kernel_workspace/AnyKernel3/tools/ak3-core.sh"
+          for opt in CONFIG_KSU=y CONFIG_KSU_SUSFS=y CONFIG_HMBIRD_SCHED=y; do
+            grep -qxF "$opt" "$OUT/.config" || {
+              echo "::error::Required kernel option missing: $opt"
+              exit 50
+            }
+          done
+          for bad in CONFIG_MQ_IOSCHED_ADIOS=y CONFIG_BBG=y CONFIG_REKERNEL=y; do
+            if grep -qxF "$bad" "$OUT/.config"; then
+              echo "::error::Unexpected addon config: $bad"
+              exit 51
+            fi
+          done
+          strings -a "$IMAGE" | grep -m1 '^Linux version 6\.6\.66-' || {
+            echo "::error::Image kernel base does not match stock 6.6.66"
+            exit 52
+          }
+          cmp "$IMAGE" "$GITHUB_WORKSPACE/kernel_workspace/AnyKernel3/Image" || {
+            echo "::error::Built Image differs from AnyKernel3 Image"
+            exit 53
+          }
+          echo "Compiled Image / SukiSU / SUSFS / HMBIRD source verification passed"
+
+      - name: Package STRICT model-checked AK3 without any extra modules
+        run: |
+          set -euo pipefail
+          BASE="$GITHUB_WORKSPACE/kernel_workspace/AnyKernel3"
+          cp "$GITHUB_WORKSPACE/templates/ace5pro_minimal_susfs_anykernel.sh" "$BASE/anykernel.sh"
+          chmod 755 "$BASE/anykernel.sh"
+          sh -n "$BASE/anykernel.sh"
+          # No separate SUSFS module is automatically installed; SUSFS
+          # support comes only from the compiled kernel.
+          test -s "$BASE/Image"
+          test -s "$BASE/tools/ak3-core.sh"
+          test ! -e "$BASE/kpn.zip"
+          test ! -e "$BASE/zram.zip"
+          test ! -e "$BASE/ksu_module_susfs.zip"
+          test ! -e "$BASE/patch_linux"
+          cat > "$BASE/minimal-susfs-test-info.txt" <<'EOF'
+          TARGET=OnePlus Ace 5 Pro
+          DEVICE=PKR110
+          CODENAME=OP60EBL1
+          OS=Android 16
+          STOCK_KERNEL_BASE=6.6.66
+          GKI_KMI=android15-6.6
+          SUKISU=40959
+          SUSFS=builtin_minimal
+          KPM=disabled
+          ADIOS=disabled
+          BBG=disabled
+          UNICODE_AND_FUSE_EXTRA_PATCH=disabled
+          COMPRESSOR_AND_NETWORK_EXTRA_PATCH=disabled
+          OEM_HMBIRD_SCHEDULER_SOURCE=preserved
+          SERIAL_BINDING=none
+          PRODUCTION_RELEASE=no
+          REAL_DEVICE_STABILITY_TEST=not_performed
+          AUTHOR=闲鱼 心中都是莫
+          EOF
+          ZIP_NAME="Android16_Kernel6.6.66_OnePlusAce5Pro_PKR110_SukiSU40959_SUSFSOnly_MINIMAL_UNTESTED_run${GITHUB_RUN_ID}.zip"
+          (
+            cd "$BASE"
+            zip -q -r "$GITHUB_WORKSPACE/$ZIP_NAME" . -x '.git/*'
+          )
+          unzip -t "$ZIP_NAME" | tail -n 2
+          ZIP_NAME="$ZIP_NAME" python3 - <<'PY'
+          import os,zipfile
+          zpath=os.environ['ZIP_NAME']
+          with zipfile.ZipFile(zpath) as z:
+              assert z.testzip() is None, 'ZIP CRC failure'
+              members=set(z.namelist())
+              for item in ['anykernel.sh','Image','tools/ak3-core.sh','minimal-susfs-test-info.txt']:
+                  assert item in members, f'missing entry {item}'
+              assert all('kpn' not in p.lower() and 'kpm' not in p.lower() for p in members), 'unexpected KPM'
+              assert any('SUSFS=builtin_minimal' in z.read('minimal-susfs-test-info.txt').decode()
+                         for _ in (0,))
+          print('PASS: flashable structure, zip CRC, core SUSFS metadata, KPM absent')
+          PY
+          sha256sum "$ZIP_NAME" > "$ZIP_NAME.sha256"
+          echo "FINAL_ZIP=$ZIP_NAME" >> "$GITHUB_ENV"
+          echo "Created UNTESTED trial: $ZIP_NAME"
+
+      - name: Save test artifact and SHA256 (no cloud release)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Ace5Pro_Android16_6.6.66_SukiSU40959_SUSFS_Minimal_UNTESTED_${{ github.run_id }}
+          path: |
+            ${{ env.FINAL_ZIP }}
+            ${{ env.FINAL_ZIP }}.sha256
+          if-no-files-found: error
+          retention-days: 15
+          compression-level: 0
