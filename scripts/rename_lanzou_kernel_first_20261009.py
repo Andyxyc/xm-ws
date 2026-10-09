@@ -74,7 +74,7 @@ def list_candidates(client):
                 continue
             # Folder identity must agree with the filename to prevent renaming
             # an unrelated file or silently mixing models.
-            if not replacement.split("_", 2)[1] == name:
+            if not replacement.startswith(replacement.split("_", 1)[0] + "_" + name + "_"):
                 skipped.append({"folder": name, "old_name": f.name,
                                 "reason": "model_folder_mismatch"})
                 continue
