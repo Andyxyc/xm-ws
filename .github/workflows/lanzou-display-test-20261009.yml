@@ -1,4 +1,5 @@
 name: Lanzou Display Rename Unit Tests
+run-name: Verify ASCII filenames with Chinese folders - ${{ github.run_id }}
 on:
   push:
     branches: [SukiSU-Ultra]
