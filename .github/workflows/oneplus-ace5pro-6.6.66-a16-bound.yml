@@ -1,0 +1,309 @@
+name: OnePlus Ace 5 Pro 6.6.66 A16 Bound
+
+run-name: Ace5Pro-6.6.66-A16-Bound-${{ github.run_id }}
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [SukiSU-Ultra]
+    paths:
+      - .github/workflows/oneplus-ace5pro-6.6.66-a16-bound.yml
+      - scripts/ksu_uapi_sync/**
+      - scripts/sukisu_compat/**
+      - scripts/padpro_fuse_name_filter.py
+      - scripts/padpro_fuse_readdir_guard.py
+      - patches/unicode_bypass_fix_6.1+.patch
+      - patches/fuse_bpf_lookup_revalidate_6.1.patch
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: ace5pro-6.6.66-a16-bound
+  cancel-in-progress: true
+
+env:
+  TZ: Asia/Shanghai
+  TARGET_MODEL: OnePlus Ace 5 Pro
+  TARGET_CODE: PKR110
+  TARGET_ANDROID: "16"
+  KERNEL_BASE: "6.6.66"
+  KSU_PIN: 70fa0e092a2c81060823f8ae526eac14fdda2930
+  KSUVER: "40959"
+  # Only the SHA-256 of the licensed device serial is committed.
+  # The raw serial is intentionally not stored in this public repository.
+  BOUND_SERIAL_SHA256: 3f1fda9ea664027b9bb98a48eb5ce951424cb7c296ea887d80306a7edaa725af
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Fetch cctv18 6.6.66 builder and convert to real SukiSU 40959
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 \
+            https://raw.githubusercontent.com/cctv18/oppo_oplus_realme_sm8750/main/local/builder_6.6.66.sh \
+            -o ace5pro-builder.sh
+          chmod +x ace5pro-builder.sh
+
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path("ace5pro-builder.sh")
+          s=p.read_text()
+
+          # Make apt-mark safe on GitHub runner.
+          s=s.replace(
+              'SU apt-mark hold firefox && apt-mark hold libc-bin && apt-mark hold man-db',
+              'SU apt-mark hold firefox; SU apt-mark hold libc-bin; SU apt-mark hold man-db'
+          )
+
+          # cctv18 currently redirects both y/r to BakaSU. Keep r as Baka but make y
+          # a real pinned SukiSU Ultra 40959 build.
+          start=s.index('if [[ $KSU_BRANCH == [yYrR] ]]; then')
+          end=s.index('elif [[ "$KSU_BRANCH" == "n" || "$KSU_BRANCH" == "N" ]]; then', start)
+          replacement=r'''if [[ "$KSU_BRANCH" == "y" || "$KSU_BRANCH" == "Y" ]]; then
+            echo ">>> 拉取真正 SukiSU Ultra 40959..."
+            curl -fLSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/${KSU_PIN}/kernel/setup.sh" | bash -s builtin
+            git -C KernelSU fetch origin "${KSU_PIN}" --depth=1
+            git -C KernelSU checkout --detach "${KSU_PIN}"
+            test "$(git -C KernelSU rev-parse HEAD)" = "${KSU_PIN}"
+
+            sed -i 's|^KSU_VERSION     := .*|KSU_VERSION     := 40959|' KernelSU/kernel/Makefile
+            sed -i 's|^VERSION_TAG     := .*|VERSION_TAG     := 4.2.0|' KernelSU/kernel/Makefile
+            if grep -q '^KSU_VERSION_FULL := ' KernelSU/kernel/Makefile; then
+              sed -i 's|^KSU_VERSION_FULL := .*|KSU_VERSION_FULL := v4.2.0-xiaomo@builtin[70fa0e09]|' KernelSU/kernel/Makefile
+            fi
+
+            UAPI_FILE=""
+            for f in KernelSU/kernel/include/uapi/supercall.h KernelSU/uapi/supercall.h; do
+              [ -f "$f" ] && { UAPI_FILE="$f"; break; }
+            done
+            if [ -n "$UAPI_FILE" ]; then
+              read_uapi() {
+                grep -ohE 'KERNEL_SU_UAPI_VERSION[^0-9]*[0-9]+' "$UAPI_FILE" | grep -oE '[0-9]+' | tail -n1
+              }
+              CURRENT_UAPI="$(read_uapi || true)"
+              if [ "${CURRENT_UAPI:-0}" -lt 5 ]; then
+                patch -p1 --forward -d KernelSU < "$GITHUB_WORKSPACE/scripts/ksu_uapi_sync/builtin-uapi5.patch"
+              fi
+            fi
+            bash "$GITHUB_WORKSPACE/scripts/sukisu_compat/apply.sh" KernelSU
+            echo 'CONFIG_KSU_FULL_NAME_FORMAT="%TAG_NAME%-%COMMIT_SHA%@xiaomo"' >> ./common/arch/arm64/configs/gki_defconfig
+
+          elif [[ "$KSU_BRANCH" == "r" || "$KSU_BRANCH" == "R" ]]; then
+            echo ">>> 拉取 BakaSU（对照分支）..."
+            curl -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/main/kernel/setup.sh" | bash -s main
+            echo 'CONFIG_KSU_FULL_NAME_FORMAT="%TAG_NAME%-%COMMIT_SHA%@cctv18"' >> ./common/arch/arm64/configs/gki_defconfig
+          '''
+          s=s[:start]+replacement+s[end:]
+
+          # Insert our existing OnePlus Unicode/FUSE hardening immediately before compile.
+          marker='# ===== 编译内核 ====='
+          if marker not in s:
+              raise SystemExit('compile marker not found')
+
+          inject=r'''
+          # ===== 小莫 Unicode/FUSE 修复 =====
+          echo ">>> 应用小莫 Unicode/FUSE 修复..."
+          cd "$WORKDIR/kernel_workspace/common"
+
+          PATCH_FILE="$GITHUB_WORKSPACE/patches/unicode_bypass_fix_6.1+.patch"
+          patch -p1 --dry-run --forward --fuzz=0 < "$PATCH_FILE"
+          patch -p1 --forward --fuzz=0 < "$PATCH_FILE"
+          grep -qF "if (*LEAF_STR(leaf) == '\\0')" fs/unicode/utf8-norm.c
+
+          if grep -qF 'CONFIG_FUSE_BPF=y' arch/arm64/configs/gki_defconfig; then
+            python3 "$GITHUB_WORKSPACE/scripts/padpro_fuse_name_filter.py" .
+            python3 "$GITHUB_WORKSPACE/scripts/padpro_fuse_readdir_guard.py" .
+
+            FUSE_PATCH="$GITHUB_WORKSPACE/patches/fuse_bpf_lookup_revalidate_6.1.patch"
+            patch -p1 --dry-run --forward --fuzz=0 < "$FUSE_PATCH"
+            patch -p1 --forward --fuzz=0 < "$FUSE_PATCH"
+
+            grep -qF 'fuse_default_ignorable_code_point' fs/fuse/dir.c
+            grep -qF 'fuse_android_private_dir_readdir_denied' fs/fuse/readdir.c
+            grep -qF 'fuse_lookup_revalidate_initialize' fs/fuse/backing.c
+          else
+            echo "ℹ️ CONFIG_FUSE_BPF 未启用，跳过 lookup revalidate，仅保留 Unicode 修复"
+          fi
+
+          git diff --check -- fs/unicode/utf8-norm.c fs/fuse/dir.c fs/fuse/readdir.c fs/fuse/backing.c fs/fuse/fuse_i.h 2>/dev/null || true
+          cd "$WORKDIR/kernel_workspace"
+
+          '''
+          s=s.replace(marker, inject+marker, 1)
+          p.write_text(s)
+          PY
+
+          bash -n ace5pro-builder.sh
+          grep -q '真正 SukiSU Ultra 40959' ace5pro-builder.sh
+          grep -q '小莫 Unicode/FUSE 修复' ace5pro-builder.sh
+          echo "✅ builder prepared"
+
+      - name: Build Ace 5 Pro 6.6.66 for Android 16 profile
+        env:
+          MANIFEST: OnePlus_Ace5Pro_PKR110_Android16
+        run: |
+          set -euo pipefail
+
+          # cctv18 6.6.66 uses the android15-6.6 KMI base; this is intentional.
+          # Target ROM/userland is Android 16 on PKR110.
+          printf '%s\n' \
+            "android15-8-g29d86c5fc9dd-abogki428889875-4k" \
+            "y" \
+            "n" \
+            "y" \
+            "n" \
+            "n" \
+            "y" \
+            "n" \
+            "n" \
+            "n" \
+            "n" \
+            "n" \
+            | bash ./ace5pro-builder.sh
+
+      - name: Apply SukiSU KPM and bind installer to licensed device
+        run: |
+          set -euo pipefail
+
+          OUT="$GITHUB_WORKSPACE/kernel_workspace/common/out/arch/arm64/boot"
+          test -s "$OUT/Image"
+
+          rm -rf SukiSU_patch
+          git clone --depth=1 https://github.com/ShirkNeko/SukiSU_patch.git
+          KPM="$GITHUB_WORKSPACE/SukiSU_patch/kpm/patch_linux"
+          test -f "$KPM"
+          chmod +x "$KPM"
+
+          cd "$OUT"
+          cp "$KPM" ./patch_linux
+          ./patch_linux
+          test -s oImage
+          mv -f oImage Image
+
+          cd "$GITHUB_WORKSPACE"
+          AK3="$GITHUB_WORKSPACE/kernel_workspace/AnyKernel3"
+          test -f "$AK3/anykernel.sh"
+          test -s "$AK3/Image"
+          cp "$OUT/Image" "$AK3/Image"
+
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path("kernel_workspace/AnyKernel3/anykernel.sh")
+          s=p.read_text()
+          marker='. tools/ak3-core.sh'
+          if marker not in s:
+              raise SystemExit('AK3 core marker missing')
+
+          guard=r'''
+          
+          # ---- Licensed device binding ----
+          BOUND_SERIAL_SHA256="3f1fda9ea664027b9bb98a48eb5ce951424cb7c296ea887d80306a7edaa725af"
+
+          read_device_serial() {
+            local v
+            for key in ro.serialno ro.boot.serialno; do
+              v="$(getprop "$key" 2>/dev/null | tr -d '\r\n ')"
+              [ -n "$v" ] && { echo "$v"; return 0; }
+            done
+
+            if [ -r /proc/bootconfig ]; then
+              v="$(sed -n 's/^androidboot\.serialno[[:space:]]*=[[:space:]]*"\{0,1\}\([^"[:space:]]*\)"\{0,1\}.*$/\1/p' /proc/bootconfig | head -n1)"
+              [ -n "$v" ] && { echo "$v"; return 0; }
+            fi
+
+            if [ -r /proc/cmdline ]; then
+              v="$(tr ' ' '\n' < /proc/cmdline | sed -n 's/^androidboot\.serialno=//p' | head -n1)"
+              [ -n "$v" ] && { echo "$v"; return 0; }
+            fi
+            return 1
+          }
+
+          ACTUAL_SERIAL="$(read_device_serial || true)"
+          [ -n "$ACTUAL_SERIAL" ] || abort "❌ 无法读取设备序列号，已拒绝刷入。"
+
+          ACTUAL_SERIAL_SHA256="$(printf '%s' "$ACTUAL_SERIAL" | "$AKHOME/tools/busybox" sha256sum | "$AKHOME/tools/busybox" awk '{print $1}')"
+          [ "$ACTUAL_SERIAL_SHA256" = "$BOUND_SERIAL_SHA256" ] || abort "❌ 设备授权不匹配，已拒绝刷入。"
+
+          MODEL="$(getprop ro.product.model 2>/dev/null || true)"
+          if [ -n "$MODEL" ]; then
+            case "$MODEL" in
+              *PKR110*|*Ace*5*Pro*) ;;
+              *) abort "❌ 当前设备不是授权的一加 Ace 5 Pro / PKR110，已拒绝刷入。" ;;
+            esac
+          fi
+
+          ui_print "✅ 设备授权校验通过"
+          ui_print "目标: OnePlus Ace 5 Pro / PKR110 / Android 16"
+          ui_print "内核: 6.6.66 / SukiSU Ultra 40959 / KPM"
+          # ---- End licensed device binding ----
+          '''
+          s=s.replace(marker, marker+guard, 1)
+          p.write_text(s)
+          PY
+
+          dash -n "$AK3/anykernel.sh"
+          sh -n "$AK3/anykernel.sh"
+          grep -qF "$BOUND_SERIAL_SHA256" "$AK3/anykernel.sh"
+
+          cat > "$AK3/license-info.txt" <<EOF
+          TARGET=OnePlus Ace 5 Pro
+          MODEL=PKR110
+          ANDROID_TARGET=16
+          KERNEL=6.6.66
+          SUKISU_ULTRA=40959
+          KPM=enabled
+          SERIAL_BINDING=sha256-only
+          SERIAL_SHA256=$BOUND_SERIAL_SHA256
+          AUTHOR=闲鱼 心中都是莫
+          EOF
+
+          curl -fL --retry 3 -o "$AK3/ksu_module_susfs.zip" \
+            https://github.com/LingLuo17/AnyKernel3/releases/download/v2.3.0-r15/ksu_module_susfs.zip
+          echo "abcd6bf456ea8189298d9e496faa440201d90e4f0bd93b83c0527589001c9376  $AK3/ksu_module_susfs.zip" | sha256sum -c -
+          unzip -t "$AK3/ksu_module_susfs.zip" >/dev/null
+
+          echo "✅ KPM + serial-bound installer ready"
+
+      - name: Verify final kernel and package
+        run: |
+          set -euo pipefail
+          AK3="$GITHUB_WORKSPACE/kernel_workspace/AnyKernel3"
+          test -s "$AK3/Image"
+
+          BANNER="$(strings -a "$AK3/Image" | grep -m1 '^Linux version ')"
+          echo "$BANNER"
+          printf '%s\n' "$BANNER" | grep -F '6.6.66-'
+
+          strings -a "$AK3/Image" | grep -E 'v4\.2\.0-xiaomo@builtin|SukiSU|40959' | head -n 30 || true
+
+          grep -qF '设备授权校验通过' "$AK3/anykernel.sh"
+          grep -qF "$BOUND_SERIAL_SHA256" "$AK3/anykernel.sh"
+          grep -qF 'MODEL=PKR110' "$AK3/license-info.txt"
+
+          OUT="OnePlus_Ace5Pro_PKR110_Android16_6.6.66_SukiSUUltra_40959_KPM_ILH_BOUND.zip"
+          rm -f "$OUT"
+          (
+            cd "$AK3"
+            zip -qr "$GITHUB_WORKSPACE/$OUT" .
+          )
+          unzip -t "$OUT" >/dev/null
+          sha256sum "$OUT" | tee "$OUT.sha256"
+          echo "FINAL_ZIP=$OUT" >> "$GITHUB_ENV"
+
+      - name: Upload Ace 5 Pro bound package
+        uses: actions/upload-artifact@v7
+        with:
+          name: OnePlus_Ace5Pro_Android16_6.6.66_SukiSU40959_BOUND
+          path: |
+            ${{ env.FINAL_ZIP }}
+            ${{ env.FINAL_ZIP }}.sha256
+          retention-days: 7
+          compression-level: 9
