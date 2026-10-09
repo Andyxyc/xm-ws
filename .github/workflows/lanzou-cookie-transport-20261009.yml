@@ -1,0 +1,49 @@
+name: Lanzou cookie transport verification
+on:
+  push:
+    branches: [SukiSU-Ultra]
+    paths:
+      - .github/workflows/lanzou-cookie-transport-20261009.yml
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Compare read-only authenticated Cookie transmission
+        env:
+          LANZOU_YLOGIN: ${{ secrets.LANZOU_YLOGIN }}
+          LANZOU_PHPDISK_INFO: ${{ secrets.LANZOU_PHPDISK_INFO }}
+        run: |
+          python - <<'PY'
+          import os,requests
+          uid=os.environ['LANZOU_YLOGIN']
+          token=os.environ['LANZOU_PHPDISK_INFO']
+          if not uid.isdecimal() or len(token)<100:
+              raise SystemExit('Invalid configured credential shapes')
+          old='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/75.0.3770.100 Safari/537.36'
+          modern='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'
+          for label,ua in [('old',old),('modern',modern)]:
+              for mode in ('dict','domain'):
+                  s=requests.Session()
+                  secrets={'ylogin':uid,'phpdisk_info':token}
+                  if mode=='dict':
+                      s.cookies.update(secrets)
+                  else:
+                      for k,v in secrets.items():
+                          s.cookies.set(k,v,domain='pc.woozooo.com',path='/')
+                  hdr={'User-Agent':ua,'Referer':'https://pc.woozooo.com/mydisk.php',
+                       'Accept-Language':'zh-CN,zh;q=0.9'}
+                  try:
+                      resp=s.post('https://pc.woozooo.com/doupload.php?uid='+uid,
+                           data={'task':47,'folder_id':-1},headers=hdr,
+                           verify=True,allow_redirects=False,timeout=15)
+                      result=resp.json()
+                      print('COOKIE_TEST',label,mode,'http',resp.status_code,
+                            'zt',result.get('zt') if isinstance(result,dict) else 'none',
+                            'list',isinstance(result.get('text'),list) if isinstance(result,dict) else False,
+                            flush=True)
+                  except (requests.RequestException,ValueError) as e:
+                      print('COOKIE_TEST',label,mode,'request_error',type(e).__name__,flush=True)
+          PY
