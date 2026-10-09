@@ -1,4 +1,5 @@
 name: Ace5Pro Minimal SukiSU SUSFS Stability Trial
+run-name: Ace5Pro 6.6.66 SUSFS minimal fixed task_mmu - ${{ github.run_id }}
 
 on:
   push:
