@@ -181,6 +181,11 @@ def make_secure_client():
             return self._safe_request("GET", url, **kwargs)
 
         def _post(self, url, data, **kwargs):
+            # LanZouCloud replaced fileup.php with html5up.php.
+            # Other API endpoints remain unchanged; the same HTTPS origin and
+            # strict redirect checks are preserved.
+            if url == "https://pc.woozooo.com/fileup.php":
+                url = "https://pc.woozooo.com/html5up.php"
             return self._safe_request("POST", url, data=data, **kwargs)
 
         def login_by_cookie(self, cookie: dict) -> int:
