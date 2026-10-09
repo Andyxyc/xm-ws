@@ -1,5 +1,5 @@
 name: Ace5Pro Minimal SukiSU SUSFS Stability Trial
-run-name: Ace5Pro 6.6.66 SUSFS minimal fixed task_mmu - ${{ github.run_id }}
+run-name: Ace5Pro 6.6.66 UAPI5 SU-Modules recovery trial - ${{ github.run_id }}
 
 on:
   push:
@@ -76,6 +76,16 @@ jobs:
           test -s "$IMAGE"
           test "$(stat -c %s "$IMAGE")" -gt 6000000
           test -s "$OUT/.config"
+          # The manager enables Superuser and Module tabs only when UAPI 5 is real.
+          KSU="$GITHUB_WORKSPACE/kernel_workspace/KernelSU/kernel"
+          test -s "$KSU/include/uapi/supercall.h"
+          grep -qF "KERNEL_SU_UAPI_VERSION, 5" "$KSU/include/uapi/supercall.h" || {
+            echo "::error::Kernel UAPI is not 5; manager 40959-5 would refuse Superuser/Modules"
+            exit 60
+          }
+          grep -qF "KSU_GET_INFO_FLAG_BUNDLED" "$KSU/include/uapi/supercall.h"
+          grep -qF "KSU_DRIVER_PERMISSION_SU_SESSION" "$KSU/supercall/supercall.c"
+          grep -qF "EVENT_SERVICES" "$KSU/supercall/dispatch.c"
           test -s "$GITHUB_WORKSPACE/kernel_workspace/AnyKernel3/tools/ak3-core.sh"
           for opt in CONFIG_KSU=y CONFIG_KSU_SUSFS=y CONFIG_HMBIRD_SCHED=y; do
             grep -qxF "$opt" "$OUT/.config" || {
@@ -122,6 +132,8 @@ jobs:
           STOCK_KERNEL_BASE=6.6.66
           GKI_KMI=android15-6.6
           SUKISU=40959
+          SUKISU_UAPI=5
+          BUILTIN_UAPI_CAPABILITY=verified
           SUSFS=builtin_minimal
           KPM=disabled
           ADIOS=disabled
@@ -134,7 +146,7 @@ jobs:
           REAL_DEVICE_STABILITY_TEST=not_performed
           AUTHOR=闲鱼 心中都是莫
           EOF
-          ZIP_NAME="Android16_Kernel6.6.66_OnePlusAce5Pro_PKR110_SukiSU40959_SUSFSOnly_MINIMAL_UNTESTED_run${GITHUB_RUN_ID}.zip"
+          ZIP_NAME="Android16_Kernel6.6.66_OnePlusAce5Pro_PKR110_SukiSU40959_UAPI5_SUSFSOnly_MINIMAL_UNTESTED_run${GITHUB_RUN_ID}.zip"
           (
             cd "$BASE"
             zip -q -r "$GITHUB_WORKSPACE/$ZIP_NAME" . -x '.git/*'
@@ -149,8 +161,10 @@ jobs:
               for item in ['anykernel.sh','Image','tools/ak3-core.sh','minimal-susfs-test-info.txt']:
                   assert item in members, f'missing entry {item}'
               assert all('kpn' not in p.lower() and 'kpm' not in p.lower() for p in members), 'unexpected KPM'
-              assert any('SUSFS=builtin_minimal' in z.read('minimal-susfs-test-info.txt').decode()
-                         for _ in (0,))
+              metadata=z.read('minimal-susfs-test-info.txt').decode()
+              assert 'SUSFS=builtin_minimal' in metadata
+              assert 'SUKISU_UAPI=5' in metadata
+              assert 'BUILTIN_UAPI_CAPABILITY=verified' in metadata
           print('PASS: flashable structure, zip CRC, core SUSFS metadata, KPM absent')
           PY
           sha256sum "$ZIP_NAME" > "$ZIP_NAME.sha256"
@@ -160,7 +174,7 @@ jobs:
       - name: Save test artifact and SHA256 (no cloud release)
         uses: actions/upload-artifact@v4
         with:
-          name: Ace5Pro_Android16_6.6.66_SukiSU40959_SUSFS_Minimal_UNTESTED_${{ github.run_id }}
+          name: Ace5Pro_Android16_6.6.66_SukiSU40959_UAPI5_SUSFS_Minimal_UNTESTED_${{ github.run_id }}
           path: |
             ${{ env.FINAL_ZIP }}
             ${{ env.FINAL_ZIP }}.sha256
