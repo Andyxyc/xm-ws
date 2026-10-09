@@ -1,0 +1,80 @@
+name: OnePlus SukiSU Kernel First Rename
+on:
+  workflow_run:
+    workflows: [OnePlus SukiSU Lanzou Backfill 20261009]
+    types: [completed]
+    branches: [SukiSU-Ultra]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: oneplus-sukisu-kernel-first-rename-20261009
+  cancel-in-progress: false
+
+jobs:
+  rename:
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' ||
+          (github.event.workflow_run.id == 37918855667 &&
+           github.event.workflow_run.head_branch == 'SukiSU-Ultra') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout publisher and rename guard
+        uses: actions/checkout@v4
+        with:
+          ref: SukiSU-Ultra
+          persist-credentials: false
+
+      - name: Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Check source and cloud configuration
+        env:
+          LANZOU_YLOGIN: ${{ secrets.LANZOU_YLOGIN }}
+          LANZOU_PHPDISK_INFO: ${{ secrets.LANZOU_PHPDISK_INFO }}
+        run: |
+          set -euo pipefail
+          python -m py_compile scripts/publish_lanzou_ak3.py scripts/rename_lanzou_kernel_first_20261009.py
+          if [[ -z "$LANZOU_YLOGIN" || -z "$LANZOU_PHPDISK_INFO" ]]; then
+            echo "::error::LanZouCloud Secrets are missing"
+            exit 2
+          fi
+
+      - name: Install pinned cloud client
+        run: |
+          python -m pip install --disable-pip-version-check --no-cache-dir \
+            'requests==2.32.5' 'requests-toolbelt==1.0.0' setuptools
+          python -m pip install --disable-pip-version-check --no-cache-dir --no-build-isolation \
+            'git+https://github.com/zaxtyson/LanZouCloud-API.git@3bb917f6baf873d83b1e8e6fb2df74c60c4d8cb3'
+
+      - name: Read-only preview of exactly eligible generated AK3 filenames
+        env:
+          LANZOU_YLOGIN: ${{ secrets.LANZOU_YLOGIN }}
+          LANZOU_PHPDISK_INFO: ${{ secrets.LANZOU_PHPDISK_INFO }}
+          LANZOU_PHPSESSID: ${{ secrets.LANZOU_PHPSESSID }}
+        run: |
+          python scripts/rename_lanzou_kernel_first_20261009.py --dry-run
+
+      - name: Rename legacy cloud filenames and verify original remote IDs
+        env:
+          LANZOU_YLOGIN: ${{ secrets.LANZOU_YLOGIN }}
+          LANZOU_PHPDISK_INFO: ${{ secrets.LANZOU_PHPDISK_INFO }}
+          LANZOU_PHPSESSID: ${{ secrets.LANZOU_PHPSESSID }}
+          PYTHONUNBUFFERED: '1'
+        run: |
+          python scripts/rename_lanzou_kernel_first_20261009.py
+
+      - name: Save non-secret rename and verification receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: oneplus-sukisu-kernel-first-rename-${{ github.run_id }}
+          path: lanzou-kernel-first-rename-report.json
+          if-no-files-found: warn
+          retention-days: 7
