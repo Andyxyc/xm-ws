@@ -1,0 +1,77 @@
+name: Ace5Pro SUSFS Minimal Trial to Lanzou
+
+on:
+  push:
+    branches: [SukiSU-Ultra]
+    paths:
+      - .github/workflows/ace5pro-minimal-trial-lanzou-20261009.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: ace5pro-minimal-trial-lanzou-20261009
+  cancel-in-progress: false
+
+jobs:
+  publish-one-trial:
+    runs-on: ubuntu-latest
+    timeout-minutes: 16
+    steps:
+      - name: Checkout verified publisher
+        uses: actions/checkout@v4
+        with:
+          ref: SukiSU-Ultra
+          persist-credentials: false
+
+      - name: Configure Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Confirm exact successful source and credentials
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LANZOU_YLOGIN: ${{ secrets.LANZOU_YLOGIN }}
+          LANZOU_PHPDISK_INFO: ${{ secrets.LANZOU_PHPDISK_INFO }}
+        run: |
+          set -euo pipefail
+          python -m py_compile scripts/publish_lanzou_ak3.py scripts/upload_ace5pro_minimal_trial_lanzou_20261009.py
+          [[ -n "$LANZOU_YLOGIN" && -n "$LANZOU_PHPDISK_INFO" ]] || {
+            echo "::error::LanZouCloud account Secrets unavailable"
+            exit 10
+          }
+          [[ "$(gh api repos/Andyxyc/xm-ws/actions/runs/37939160448 --jq .conclusion)" == "success" ]] || {
+            echo "::error::Source trial run is not successful"
+            exit 11
+          }
+
+      - name: Install pinned cloud client
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check --no-cache-dir \
+            'requests==2.32.5' 'requests-toolbelt==1.0.0' setuptools
+          python -m pip install --disable-pip-version-check --no-cache-dir --no-build-isolation \
+            'git+https://github.com/zaxtyson/LanZouCloud-API.git@3bb917f6baf873d83b1e8e6fb2df74c60c4d8cb3'
+
+      - name: Upload exact SUSFS-only trial ZIP into existing Chinese Ace5Pro folder
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LANZOU_YLOGIN: ${{ secrets.LANZOU_YLOGIN }}
+          LANZOU_PHPDISK_INFO: ${{ secrets.LANZOU_PHPDISK_INFO }}
+          LANZOU_PHPSESSID: ${{ secrets.LANZOU_PHPSESSID }}
+          PYTHONUNBUFFERED: '1'
+        run: |
+          set -euo pipefail
+          python -u scripts/upload_ace5pro_minimal_trial_lanzou_20261009.py
+
+      - name: Save LanZou upload receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Ace5Pro-SUSFSOnly-LanZou-Receipt-${{ github.run_id }}
+          path: ace5pro-minimal-lanzou-receipt.json
+          if-no-files-found: warn
+          retention-days: 7
