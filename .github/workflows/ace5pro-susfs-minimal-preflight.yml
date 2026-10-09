@@ -45,7 +45,7 @@ jobs:
           assert '70fa0e092a2c81060823f8ae526eac14fdda2930' in s
           assert 'CONFIG_KSU_SUSFS=y' in s
           assert 'CONFIG_KSU=y' in s
-          assert '|| true\n  patch -p1' not in s
+          assert 'patch -p1 -F 0 --forward < 50_add_susfs_in_gki-android15-6.6.patch' in s
           for banned in ['patch -p1 -F 3 < 69_hide_stuff.patch',
                          'cve-2026-43499-rtmutex-6.6.patch',
                          'CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y']:
