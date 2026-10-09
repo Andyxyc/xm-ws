@@ -20,6 +20,8 @@ from urllib.parse import urljoin, urlsplit
 import zipfile
 from pathlib import Path
 
+from lanzou_display_names import display_filename, folder_name
+
 ROOT_FOLDER = "一加suki"
 VERSION_FOLDER = "suki-40959"
 WORKFLOW_PATH = ".github/workflows/Build Kernel OnePlus.yml"
@@ -280,7 +282,8 @@ def publish_to_lanzou(client, archive: Path, model: str, cookies: dict) -> dict:
     if client.login_by_cookie(cookies) != LanZouCloud.SUCCESS:
         raise PublishError("LanZouCloud session expired or login refused")
     folder = -1
-    for name in (ROOT_FOLDER, VERSION_FOLDER, model):
+    localized_model = folder_name(model)
+    for name in (ROOT_FOLDER, VERSION_FOLDER, localized_model):
         folder = ensure_folder(client, folder, name)
     if any(file.name == archive.name for file in client.get_file_list(folder)):
         raise PublishError("Remote filename already exists; never overwrite an existing backup")
@@ -297,7 +300,7 @@ def publish_to_lanzou(client, archive: Path, model: str, cookies: dict) -> dict:
         raise PublishError("Uploaded file ID differs from remote readback")
     # Avoid printing share URLs to the public Actions log. The account owner
     # can manage links and extraction codes in the LanZouCloud dashboard.
-    return {"folder": f"{ROOT_FOLDER}/{VERSION_FOLDER}/{model}",
+    return {"folder": f"{ROOT_FOLDER}/{VERSION_FOLDER}/{localized_model}",
             "remote_name": archive.name, "remote_file_id": int(matches[0].id)}
 
 
@@ -336,7 +339,10 @@ def main() -> int:
         folder = temp / "artifact"
         folder.mkdir()
         fetch_artifact(args.repo, args.run_id, item["name"], folder)
-        package = temp / version_first_filename(safe_name + f"_run{args.run_id}.zip")
+        package = temp / display_filename(
+            version_first_filename(safe_name + f"_run{args.run_id}.zip"),
+            expected_model=model,
+        )
         proof = make_flashable_zip(folder, package)
         client = make_secure_client()
         remote = publish_to_lanzou(client, package, model, cookies)
