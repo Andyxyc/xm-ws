@@ -39,6 +39,7 @@ jobs:
         env:
           LANZOU_YLOGIN: ${{ secrets.LANZOU_YLOGIN }}
           LANZOU_PHPDISK_INFO: ${{ secrets.LANZOU_PHPDISK_INFO }}
+          LANZOU_PHPSESSID: ${{ secrets.LANZOU_PHPSESSID }}
         run: |
           if [[ -z "$LANZOU_YLOGIN" || -z "$LANZOU_PHPDISK_INFO" ]]; then
             echo "active=false" >> "$GITHUB_OUTPUT"
@@ -62,6 +63,7 @@ jobs:
           SOURCE_RUN_ID: ${{ github.event.workflow_run.id || inputs.source_run_id }}
           LANZOU_YLOGIN: ${{ secrets.LANZOU_YLOGIN }}
           LANZOU_PHPDISK_INFO: ${{ secrets.LANZOU_PHPDISK_INFO }}
+          LANZOU_PHPSESSID: ${{ secrets.LANZOU_PHPSESSID }}
         run: |
           set -euo pipefail
           python scripts/publish_lanzou_ak3.py \
