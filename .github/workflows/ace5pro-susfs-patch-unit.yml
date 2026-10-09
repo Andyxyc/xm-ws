@@ -1,0 +1,57 @@
+name: Ace5Pro SUSFS Minimal Patch Compatibility Test
+on:
+  push:
+    branches: [SukiSU-Ultra]
+    paths:
+      - .github/workflows/ace5pro-susfs-patch-unit.yml
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: SukiSU-Ultra
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Check pinned minimal SUSFS patch against actual 6.6.66 file
+        run: |
+          set -euo pipefail
+          python -m py_compile scripts/ace5pro_minimal_susfs_prepare.py scripts/ace5pro_susfs_rebase_minimal.py
+          bash -n scripts/ace5pro_sukisu_minimal_compat.sh
+          curl -fLSs --retry 3 \
+            https://raw.githubusercontent.com/cctv18/oppo_oplus_realme_sm8750/0d90ea459dd5013ba5b1cb2e1ebc8c6d1544d746/local/builder_6.6.66.sh \
+            -o /tmp/ace5pro-minimal-builder.sh
+          python scripts/ace5pro_minimal_susfs_prepare.py /tmp/ace5pro-minimal-builder.sh
+          bash -n /tmp/ace5pro-minimal-builder.sh
+          grep -qF 'ace5pro_sukisu_minimal_compat.sh' /tmp/ace5pro-minimal-builder.sh
+          curl -fLSs --retry 3 \
+            https://raw.githubusercontent.com/cctv18/susfs4oki/0730de4f5d46ee2997f953101b0f608c0b400b38/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch \
+            -o /tmp/susfs-test.patch
+          python scripts/ace5pro_susfs_rebase_minimal.py /tmp/susfs-test.patch --builder /tmp/ace5pro-minimal-builder.sh
+          mkdir -p /tmp/susfs-test-src/fs/proc
+          curl -fLSs --retry 3 \
+            https://raw.githubusercontent.com/cctv18/android_kernel_common_oneplus_sm8750/9a56e8288fc62e2047a142114faeb9467447311d/fs/proc/task_mmu.c \
+            -o /tmp/susfs-test-src/fs/proc/task_mmu.c
+          python - <<'PY'
+          from pathlib import Path
+          s=Path('/tmp/susfs-test.patch').read_text()
+          first=s.index('diff --git a/fs/proc/task_mmu.c b/fs/proc/task_mmu.c')
+          last=s.index('\ndiff --git ', first+10)
+          section=s[first:last+1]
+          Path('/tmp/task_mmu-only.patch').write_text(section)
+          assert section.count('@@ -')==3,section.count('@@ -')
+          assert 'susfs_sus_kstat_spoof_show_map_vma' in section
+          for invalid in ['@@ -892','@@ -955','@@ -999','@@ -1021','@@ -1800','@@ -1809']:
+              assert invalid not in section,invalid
+          print('PASS: kept required KSTAT hunks, omitted six disabled SUS_MAP hunks')
+          PY
+          cd /tmp/susfs-test-src
+          patch --batch --dry-run --forward -p1 -F0 < /tmp/task_mmu-only.patch
+          patch --batch --forward -p1 -F0 < /tmp/task_mmu-only.patch
+          grep -qF 'susfs_sus_kstat_spoof_show_map_vma' fs/proc/task_mmu.c
+          echo 'PASS: pinned real 6.6.66 /proc/task_mmu.c cleanly applies all retained SUSFS changes'
