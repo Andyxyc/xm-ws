@@ -244,9 +244,17 @@ def main() -> int:
     item, (model, safe_name) = selected
     ylogin = os.environ.get("LANZOU_YLOGIN", "")
     phpdisk_info = os.environ.get("LANZOU_PHPDISK_INFO", "")
+    php_session = os.environ.get("LANZOU_PHPSESSID", "")
     if not ylogin or not phpdisk_info:
         print("::warning::LanZouCloud credentials missing; kernel artifact remains in GitHub")
         return 0
+    if not ylogin.isdecimal() or not phpdisk_info.strip():
+        raise PublishError("LanZouCloud Cookie format is invalid; check GitHub Secrets")
+    cookies = {"ylogin": ylogin, "phpdisk_info": phpdisk_info}
+    if php_session:
+        # Newer LanZouCloud sessions may additionally use this HTTP-only
+        # cookie; it is injected from a GitHub Secret, never stored or logged.
+        cookies["PHPSESSID"] = php_session
     with tempfile.TemporaryDirectory(prefix="lanzou-oneplus-") as tmp:
         temp = Path(tmp)
         folder = temp / "artifact"
@@ -255,7 +263,7 @@ def main() -> int:
         package = temp / (safe_name + f"_run{args.run_id}.zip")
         proof = make_flashable_zip(folder, package)
         client = make_secure_client()
-        remote = publish_to_lanzou(client, package, model, {"ylogin": ylogin, "phpdisk_info": phpdisk_info})
+        remote = publish_to_lanzou(client, package, model, cookies)
         receipt = {"source_run_id": args.run_id, "source_artifact_id": item["id"],
                    "model": model, "archive_sha256": proof["sha256"],
                    "archive_size_bytes": proof["size_bytes"],
