@@ -80,11 +80,21 @@ VERSION_FIRST = re.compile(
     r"SukiSU40959_(?P<flags>[A-Za-z0-9_-]+)_"
     r"run(?P<run>\d+)\.zip"
 )
-# Updated visible name:
-# 安卓16.0.0_风驰_内核6.6.118_OnePlus13_SukiSU40959_KPM_ILH_HMBIRD_run123.zip
-DISPLAY_FIRST = re.compile(
+# Historical Chinese filenames may already exist in the cloud. These are
+# accepted as inputs solely to migrate them back to ASCII output.
+CHINESE_DISPLAY = re.compile(
     r"安卓(?P<android>\d+(?:\.\d+){1,2})_"
     r"(?P<variant>风驰|常规)_内核(?P<kernel>\d+\.\d+\.\d+)_"
+    r"(?P<model>OnePlus[A-Za-z0-9_-]{2,80})_"
+    r"SukiSU40959_(?P<flags>[A-Za-z0-9_-]+)_"
+    r"run(?P<run>\d+)\.zip"
+)
+# Final names are English/ASCII only. The optional HMBIRD prefix must agree
+# with the actual HMBIRD token in the suffix.
+ASCII_DISPLAY = re.compile(
+    r"Android(?P<android>\d+(?:\.\d+){1,2})_"
+    r"(?:(?P<variant>HMBIRD)_)?"
+    r"Kernel(?P<kernel>\d+\.\d+\.\d+)_"
     r"(?P<model>OnePlus[A-Za-z0-9_-]{2,80})_"
     r"SukiSU40959_(?P<flags>[A-Za-z0-9_-]+)_"
     r"run(?P<run>\d+)\.zip"
@@ -101,12 +111,13 @@ def folder_name(model: str) -> str:
     return result
 
 def display_filename(filename: str, expected_model: str | None = None) -> str:
-    """Idempotent rename; preserve entire exact kernel and Android versions."""
+    """Promote Android, HMBIRD (when present), and kernel; ASCII ZIP only."""
     if len(filename) > 240:
         raise ValueError("Filename too long")
-    found = VERSION_FIRST.fullmatch(filename)
-    existing = DISPLAY_FIRST.fullmatch(filename)
-    match = found or existing
+    original = VERSION_FIRST.fullmatch(filename)
+    chinese = CHINESE_DISPLAY.fullmatch(filename)
+    existing = ASCII_DISPLAY.fullmatch(filename)
+    match = original or chinese or existing
     if match is None:
         raise ValueError("Unrecognized AK3 filename; leave untouched")
     model = match.group("model")
@@ -116,13 +127,19 @@ def display_filename(filename: str, expected_model: str | None = None) -> str:
     flags = match.group("flags").strip("_")
     if not flags or len(flags) > 70:
         raise ValueError("Missing or unusual features")
-    variant = "风驰" if "HMBIRD" in flags.split("_") else "常规"
-    if existing and existing.group("variant") != variant:
-        raise ValueError("Existing display variant conflicts with original flags")
-    new_filename = (
-        f"安卓{android}_{variant}_内核{kernel}_{model}_"
-        f"SukiSU40959_{flags}_run{match.group('run')}.zip"
+    has_hmbird = "HMBIRD" in flags.split("_")
+    if chinese and (chinese.group("variant") == "风驰") != has_hmbird:
+        raise ValueError("Chinese variant conflicts with flags")
+    if existing and bool(existing.group("variant")) != has_hmbird:
+        raise ValueError("ASCII HMBIRD label conflicts with flags")
+    important = f"Android{android}_"
+    if has_hmbird:
+        important += "HMBIRD_"
+    important += f"Kernel{kernel}_"
+    result = (
+        f"{important}{model}_SukiSU40959_{flags}_run{match.group('run')}.zip"
     )
-    if len(new_filename) > 240:
-        raise ValueError("Output filename too long")
-    return new_filename
+    if len(result) > 240 or not result.isascii():
+        raise ValueError("Unsafe non-ASCII output name")
+    return result
+
