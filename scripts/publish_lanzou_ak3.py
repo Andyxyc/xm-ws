@@ -208,7 +208,16 @@ def make_secure_client():
         def delete(self, *args, **kwargs):
             raise PublishError("Refusing remote file deletion or overwrite")
 
-    return SafeClient()
+    client = SafeClient()
+    # The 2024 SDK's Chrome/75 User-Agent is rejected by the current
+    # management API. Use the same modern browser identifier proven in the
+    # authenticated read-only diagnostics; keep HTTPS verification enabled.
+    client._headers["User-Agent"] = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/119.0.0.0 Safari/537.36"
+    )
+    return client
 
 
 def ensure_folder(client, parent: int, folder_name: str) -> int:
