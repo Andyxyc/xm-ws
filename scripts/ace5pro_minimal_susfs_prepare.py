@@ -98,8 +98,12 @@ def prepare(source: str) -> str:
         "", "remove hide_stuff download",
     )
     one("  patch -p1 -F 3 < 50_add_susfs_in_gki-android15-6.6.patch || true",
-        "  patch -p1 -F 0 --forward < 50_add_susfs_in_gki-android15-6.6.patch",
-        "require SUSFS hooks to apply")
+        '  python3 "$GITHUB_WORKSPACE/scripts/ace5pro_susfs_rebase_minimal.py" '
+        '50_add_susfs_in_gki-android15-6.6.patch '
+        '--builder "$GITHUB_WORKSPACE/ace5pro-minimal-builder.sh"\n'
+        '  patch -p1 -F 0 --forward --dry-run < 50_add_susfs_in_gki-android15-6.6.patch\n'
+        '  patch -p1 -F 0 --forward < 50_add_susfs_in_gki-android15-6.6.patch',
+        "require all retained SUSFS hooks to apply strictly")
     one("  patch -p1 -F 3 < 69_hide_stuff.patch || true",
         "  echo 'Extra hide_stuff patch is intentionally disabled'",
         "remove hide_stuff apply")
