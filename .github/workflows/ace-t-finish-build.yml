@@ -1,0 +1,95 @@
+name: OnePlus Ace T Finish Build
+run-name: ace-t-finish-${{ github.run_id }}
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [SukiSU-Ultra]
+    paths:
+      - .github/workflows/ace-t-finish-build.yml
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Dispatch repaired Ace builds
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y python3-yaml
+          python3 - <<'PY'
+          import json, os, subprocess, time, yaml
+          from pathlib import Path
+
+          repo=os.environ['GITHUB_REPOSITORY']
+          ref='SukiSU-Ultra'
+          sha=os.environ['GITHUB_SHA']
+          workflow='Build Kernel OnePlus.yml'
+          targets=['oneplus_ace_t']
+
+          doc=yaml.load((Path('.github/workflows')/workflow).read_text(encoding='utf-8'),Loader=yaml.BaseLoader)
+          fields=doc['on']['workflow_dispatch']['inputs']
+          values={k:v.get('default','') for k,v in fields.items()}
+          values.update(
+              SUSFS_CI='Release', KPM='KPM', SUSFS_META='',
+              DYNAMIC_REPO='Numbersf', BUILD_TIME='-1', SOURCE_PROFILE='',
+              KSU_META='main/builtin/xiaomo/70fa0e092a2c81060823f8ae526eac14fdda2930',
+              LZ4_UPDATE='false', ZRAM='0/lz4kd/8589934592', SUFFIX='-1',
+              RESUBLEVEL='', FAST_BUILD='true', LSM_BBG='false',
+              NETFILTER='true', CCM='false', UNICODE_BYPASS='true',
+              SCHED_HMBIRD='true', DROID_SPACES='false', RE_KERNEL='false',
+              SUSFS_DEV='false', SPACE_NOCLEAN='false', BUILD_NOCACHE='false'
+          )
+
+          def api(path, method='GET', payload=None):
+              args=['gh','api',path,'-H','Accept: application/vnd.github+json','-H','X-GitHub-Api-Version: 2022-11-28']
+              data=None
+              if method!='GET': args += ['--method',method]
+              if payload is not None:
+                  args += ['--input','-']
+                  data=json.dumps(payload)
+              p=subprocess.run(args,input=data,capture_output=True,text=True,timeout=90)
+              if p.returncode:
+                  raise RuntimeError(p.stderr[-2000:])
+              return json.loads(p.stdout) if p.stdout.strip() else {}
+
+          current=api(f'repos/{repo}/branches/{ref}')['commit']['sha']
+          if current != sha:
+              raise SystemExit(f'branch moved before repair dispatch: {current} != {sha}')
+
+          out=[]
+          for dev in targets:
+              resp=api(
+                  f'repos/{repo}/actions/workflows/Build%20Kernel%20OnePlus.yml/dispatches',
+                  method='POST',
+                  payload={'ref':ref,'inputs':dict(values,FILE=dev),'return_run_details':True}
+              )
+              rid=resp.get('workflow_run_id')
+              if not isinstance(rid,int) or rid<=0:
+                  raise RuntimeError(f'missing run id for {dev}')
+              out.append({'device':dev,'run_id':rid,'url':resp.get('html_url')})
+              print(dev,rid,resp.get('html_url'),flush=True)
+              time.sleep(2)
+
+          Path('ace-repair-runs.json').write_text(json.dumps(out,ensure_ascii=False,indent=2),encoding='utf-8')
+          PY
+
+      - name: Upload repair receipt
+        uses: actions/upload-artifact@v7
+        with:
+          name: ace-t-finish-${{ github.run_id }}
+          path: ace-repair-runs.json
+          retention-days: 7
+          compression-level: 9
