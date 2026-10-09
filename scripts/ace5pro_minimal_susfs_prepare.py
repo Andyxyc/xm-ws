@@ -77,7 +77,7 @@ def prepare(source: str) -> str:
       patch -p1 --forward -d KernelSU < "$GITHUB_WORKSPACE/scripts/ksu_uapi_sync/builtin-uapi5.patch"
     fi
   fi
-  bash "$GITHUB_WORKSPACE/scripts/sukisu_compat/apply.sh" KernelSU
+  bash "$GITHUB_WORKSPACE/scripts/ace5pro_sukisu_minimal_compat.sh" KernelSU
   echo 'CONFIG_KSU_FULL_NAME_FORMAT="%TAG_NAME%-%COMMIT_SHA%@xiaomo"' >> ./common/arch/arm64/configs/gki_defconfig
 '''
     one(old, replacement, "pin SukiSU branch")
