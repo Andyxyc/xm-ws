@@ -1,0 +1,81 @@
+name: Lanzou Publisher Security Test
+on:
+  push:
+    branches: [SukiSU-Ultra]
+    paths:
+      - .github/workflows/lanzou-publisher-security-test.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: SukiSU-Ultra
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Validate Python and redirect safety without credentials
+        run: |
+          python -m py_compile scripts/publish_lanzou_ak3.py scripts/backfill_lanzou_ak3_20261009.py
+          python -m pip install -q 'requests==2.32.5'
+          python - <<'PY'
+          import runpy,sys,types
+          from urllib.parse import urljoin
+          api=types.ModuleType('lanzou.api')
+          mod=types.ModuleType('lanzou')
+          class Base:
+              def __init__(self):
+                  self._headers={'User-Agent':'test'}
+                  self._timeout=3
+                  self._session=None
+          api.LanZouCloud=Base
+          sys.modules['lanzou']=mod
+          sys.modules['lanzou.api']=api
+          lib=runpy.run_path('scripts/publish_lanzou_ak3.py')
+          make=lib['make_secure_client']
+          Err=lib['PublishError']
+          base='https://pc.woozooo.com/account.php'
+          class Resp:
+              def __init__(self,code,location=None):
+                  self.status_code=code
+                  self.is_redirect=300<=code<=399
+                  self.headers={'Location':location} if location else {}
+              def raise_for_status(self):
+                  if self.status_code>=400: raise RuntimeError('unavailable')
+          class Session:
+              def __init__(self,values):
+                  self.values=values
+                  self.urls=[]
+              def request(self,method,url,**kwargs):
+                  assert kwargs['allow_redirects'] is False
+                  assert kwargs['verify'] is True
+                  self.urls.append(url)
+                  return self.values[url]
+          def check(route,method='GET',blocked=False,n=None):
+              c=make()
+              c._session=Session(route)
+              try:
+                  c._safe_request(method,base)
+                  assert not blocked, 'expected rejection'
+              except Err:
+                  assert blocked, 'unexpected rejection'
+              if n is not None: assert len(c._session.urls)==n, c._session.urls
+              return c._session.urls
+          check({base:Resp(200)},n=1)
+          same=base+'?action=login'
+          check({base:Resp(302,same),same:Resp(200)},n=2)
+          check({base:Resp(302,'https://malicious.example/path')},blocked=True,n=1)
+          check({base:Resp(302,'http://pc.woozooo.com/login')},blocked=True,n=1)
+          check({base:Resp(302,same)},'POST',blocked=True,n=1)
+          check({base:Resp(302,base)},blocked=True,n=4)
+          try:
+              make().delete(1)
+              assert False,'delete must be blocked'
+          except Err: pass
+          print('PASS: python syntax and seven isolated redirect/delete safety tests')
+          PY
