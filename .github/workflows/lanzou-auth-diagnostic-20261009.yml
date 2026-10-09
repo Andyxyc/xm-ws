@@ -1,0 +1,55 @@
+name: Lanzou auth redirect diagnostic
+on:
+  push:
+    branches: [SukiSU-Ultra]
+    paths:
+      - .github/workflows/lanzou-auth-diagnostic-20261009.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Inspect account endpoint without disclosing cookies
+        env:
+          LANZOU_YLOGIN: ${{ secrets.LANZOU_YLOGIN }}
+          LANZOU_PHPDISK_INFO: ${{ secrets.LANZOU_PHPDISK_INFO }}
+        run: |
+          python - <<'PY'
+          import os, urllib.parse
+          import requests
+
+          url = 'https://pc.woozooo.com/account.php'
+          cookies = {
+              'ylogin': os.environ.get('LANZOU_YLOGIN', ''),
+              'phpdisk_info': os.environ.get('LANZOU_PHPDISK_INFO', ''),
+          }
+          if not all(cookies.values()):
+              raise SystemExit('Missing configured secrets, no requests issued')
+          def probe(kind, values):
+              try:
+                  response = requests.get(
+                      url, cookies=values,
+                      headers={'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+                               'Referer':'https://pc.woozooo.com/mydisk.php',
+                               'Accept-Language':'zh-CN,zh;q=0.9'},
+                      allow_redirects=False, timeout=18, verify=True,
+                  )
+                  loc = response.headers.get('Location', '')
+                  resolved = urllib.parse.urlsplit(urllib.parse.urljoin(url, loc)) if loc else None
+                  print(
+                      kind,
+                      'http_status=', response.status_code,
+                      'redirect_host=', resolved.hostname if resolved else 'none',
+                      'redirect_path=', resolved.path if resolved else 'none',
+                      'location_has_query=', bool(resolved.query) if resolved else False,
+                      'content_type=', response.headers.get('Content-Type', '').split(';')[0],
+                      flush=True,
+                  )
+              except requests.RequestException as exc:
+                  print(kind, 'request_error=',type(exc).__name__, flush=True)
+          probe('without_cookie', {})
+          probe('with_cookie', cookies)
+          PY
