@@ -177,6 +177,34 @@ def make_secure_client():
         def _post(self, url, data, **kwargs):
             return self._safe_request("POST", url, data=data, **kwargs)
 
+        def login_by_cookie(self, cookie: dict) -> int:
+            # The 2024 SDK checks account.php for a login-page phrase.
+            # LanZouCloud's current account endpoint can return that page
+            # even for a session accepted by the real authenticated API.
+            # Verify the read-only root folder list instead (task 47).
+            if not isinstance(cookie, dict):
+                return LanZouCloud.FAILED
+            uid = str(cookie.get("ylogin", ""))
+            if not uid.isdecimal() or not cookie.get("phpdisk_info"):
+                return LanZouCloud.FAILED
+            self._uid = uid
+            self._session.cookies.update(cookie)
+            response = self._post(
+                self._doupload_url + "?uid=" + uid,
+                {"task": 47, "folder_id": -1},
+            )
+            if response is None:
+                return LanZouCloud.NETWORK_ERROR
+            try:
+                result = response.json()
+            except (ValueError, TypeError):
+                return LanZouCloud.FAILED
+            if (not isinstance(result, dict) or
+                    result.get("zt") != 1 or
+                    not isinstance(result.get("text"), list)):
+                return LanZouCloud.FAILED
+            return LanZouCloud.SUCCESS
+
         def delete(self, *args, **kwargs):
             raise PublishError("Refusing remote file deletion or overwrite")
 
