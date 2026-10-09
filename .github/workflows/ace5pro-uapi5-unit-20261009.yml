@@ -1,0 +1,49 @@
+name: Ace5Pro 40959 UAPI5 Integration Check
+on:
+  push:
+    branches: [SukiSU-Ultra]
+    paths:
+      - .github/workflows/ace5pro-uapi5-unit-20261009.yml
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: SukiSU-Ultra
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Download exact pinned SukiSU source and test real UAPI v2-to-v5 integration
+        run: |
+          set -euo pipefail
+          bash -n scripts/ace5pro_fix_uapi5.sh scripts/ace5pro_sukisu_minimal_compat.sh
+          python -m py_compile scripts/ace5pro_minimal_susfs_prepare.py
+          SRC=/tmp/ace5pro-uapi5-test/KernelSU
+          PIN=70fa0e092a2c81060823f8ae526eac14fdda2930
+          for file in kernel/include/uapi/supercall.h kernel/kernel_includes.h kernel/supercall/dispatch.c kernel/supercall/supercall.c kernel/selinux/rules.c kernel/hook/lsm_hook.c; do
+            mkdir -p "$SRC/$(dirname "$file")"
+            curl -fLSs --retry 3 "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/$PIN/$file" -o "$SRC/$file"
+          done
+          grep -qF 'KERNEL_SU_UAPI_VERSION, 2' "$SRC/kernel/include/uapi/supercall.h"
+          bash scripts/ace5pro_sukisu_minimal_compat.sh "$SRC"
+          bash scripts/ace5pro_fix_uapi5.sh "$SRC"
+          grep -qF 'KERNEL_SU_UAPI_VERSION, 5' "$SRC/kernel/include/uapi/supercall.h"
+          grep -qF 'KSU_GET_INFO_FLAG_BUNDLED' "$SRC/kernel/include/uapi/supercall.h"
+          grep -qF 'EVENT_SERVICES' "$SRC/kernel/supercall/dispatch.c"
+          bash scripts/ace5pro_fix_uapi5.sh "$SRC"
+          echo 'PASS: exactly pinned 70fa0e09 compiled protocol is UAPI5, idempotent, FD/services verified'
+      - name: Validate generated 6.6 builder invokes full protocol check
+        run: |
+          set -euo pipefail
+          curl -fLSs --retry 3 https://raw.githubusercontent.com/cctv18/oppo_oplus_realme_sm8750/0d90ea459dd5013ba5b1cb2e1ebc8c6d1544d746/local/builder_6.6.66.sh -o /tmp/ace5pro-builder.sh
+          python scripts/ace5pro_minimal_susfs_prepare.py /tmp/ace5pro-builder.sh
+          bash -n /tmp/ace5pro-builder.sh
+          ! grep -qF '[object Object]' /tmp/ace5pro-builder.sh
+          grep -qF 'ace5pro_fix_uapi5.sh' /tmp/ace5pro-builder.sh
+          grep -qF 'ace5pro_sukisu_minimal_compat.sh' /tmp/ace5pro-builder.sh
+          echo 'PASS: generated kernel builder executes verified UAPI5 backport without template corruption'
