@@ -1,0 +1,66 @@
+name: OnePlus SukiSU Lanzou Upload
+
+on:
+  workflow_run:
+    workflows: [Build]
+    types: [completed]
+    branches: [SukiSU-Ultra]
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: 'Completed Build Kernel OnePlus workflow run ID'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  publish:
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout verified publisher
+        uses: actions/checkout@v4
+        with:
+          ref: SukiSU-Ultra
+          persist-credentials: false
+
+      - name: Configure Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Check LanZouCloud credentials
+        id: integration
+        env:
+          LANZOU_YLOGIN: ${{ secrets.LANZOU_YLOGIN }}
+          LANZOU_PHPDISK_INFO: ${{ secrets.LANZOU_PHPDISK_INFO }}
+        run: |
+          if [[ -z "$LANZOU_YLOGIN" || -z "$LANZOU_PHPDISK_INFO" ]]; then
+            echo "active=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Configure LANZOU_YLOGIN and LANZOU_PHPDISK_INFO in Actions Secrets to enable uploads"
+          else
+            echo "active=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install pinned LanZouCloud client
+        if: steps.integration.outputs.active == 'true'
+        run: |
+          python -m pip install --disable-pip-version-check --no-cache-dir \
+            'git+https://github.com/zaxtyson/LanZouCloud-API.git@3bb917f6baf873d83b1e8e6fb2df74c60c4d8cb3'
+
+      - name: Publish only verified OnePlus AK3
+        if: steps.integration.outputs.active == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id || inputs.source_run_id }}
+          LANZOU_YLOGIN: ${{ secrets.LANZOU_YLOGIN }}
+          LANZOU_PHPDISK_INFO: ${{ secrets.LANZOU_PHPDISK_INFO }}
+        run: |
+          set -euo pipefail
+          python scripts/publish_lanzou_ak3.py \
+            --repo "$GITHUB_REPOSITORY" --run-id "$SOURCE_RUN_ID"
