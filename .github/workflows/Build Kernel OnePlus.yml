@@ -526,6 +526,22 @@ jobs:
             echo "✅ Ace T historical OnePlusOSS branch normalized"
           fi
 
+          if [ "$FILE" = "oneplus_ace_t" ]; then
+            echo "修复 Ace 初代 Android 13.1 清单中的历史分支名..."
+            python3 - <<'PY'
+          from pathlib import Path
+          p=Path(".repo/manifests/oneplus_ace_t.xml")
+          s=p.read_text(encoding="utf-8")
+          old='revision="oneplus/mt6895_t_13.1.0_oneplus_ace"'
+          new='revision="mt6895_t_13.1.0_oneplus_ace"'
+          n=s.count(old)
+          if n != 2:
+              raise SystemExit(f"unexpected Ace T stale revision count: {n}")
+          p.write_text(s.replace(old,new),encoding="utf-8")
+          print("ACE_T_MT6895_BRANCH_FIXED")
+          PY
+          fi
+
           repo sync -c -j$(nproc) --no-clone-bundle --no-tags --force-sync
 
           if [ "${{ github.event.inputs.SOURCE_PROFILE }}" = "PKX110_16_0_10_500_118" ]; then
@@ -997,6 +1013,27 @@ jobs:
           }
           fix_missing_trace_include fs/namespace.c blk.h
           fix_missing_trace_include fs/super.c fs.h
+
+      - name: Postfix vendor trace-hook compatibility
+        run: |
+          set -euo pipefail
+          cd kernel_workspace/kernel_platform/common
+
+          # PatchFakePatches revert restores Android GKI trace-hook includes.
+          # Some MTK vendor trees (notably Ace5 Race B / 6.1) do not ship
+          # those headers, so remove only the unavailable includes.
+          for spec in "fs/namespace.c|trace/hooks/blk.h" "fs/super.c|trace/hooks/fs.h"; do
+            file="${spec%%|*}"
+            header="${spec##*|}"
+            if grep -qF "#include <$header>" "$file" && [ ! -f "include/$header" ]; then
+              sed -i "\|^#include <$header>$|d" "$file"
+              echo "✅ removed unavailable $header from $file"
+            fi
+            if grep -qF "#include <$header>" "$file" && [ ! -f "include/$header" ]; then
+              echo "❌ unavailable trace hook include still present: $file -> $header"
+              exit 16
+            fi
+          done
 
       - name: Detect HMBIRD capability
         env:
