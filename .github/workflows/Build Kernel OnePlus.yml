@@ -514,31 +514,26 @@ jobs:
           PY
           fi
 
-          # Numbersf's oldest Ace T manifest kept an obsolete "oneplus/" prefix.
-          # The two OnePlusOSS source repositories still publish the exact branch
-          # as mt6895_t_13.1.0_oneplus_ace, so normalize only this historical manifest.
+          # Normalize only Ace T's historical MT6895 source revisions.
+          # The remote manifest can already contain normalized revisions;
+          # keep this step idempotent and verify both source projects.
           if [ "$FILE" = "oneplus_ace_t" ]; then
-            sed -i 's#revision="oneplus/mt6895_t_13.1.0_oneplus_ace"#revision="mt6895_t_13.1.0_oneplus_ace"#g' ".repo/manifests/${FILE}.xml"
-            grep -q 'revision="mt6895_t_13.1.0_oneplus_ace"' ".repo/manifests/${FILE}.xml" || {
-              echo "❌ Ace T historical branch normalization failed"
-              exit 35
-            }
-            echo "✅ Ace T historical OnePlusOSS branch normalized"
-          fi
-
-          if [ "$FILE" = "oneplus_ace_t" ]; then
-            echo "修复 Ace 初代 Android 13.1 清单中的历史分支名..."
+            echo "校验 Ace 初代 MT6895 历史分支..."
             python3 - <<'PY'
           from pathlib import Path
-          p=Path(".repo/manifests/oneplus_ace_t.xml")
-          s=p.read_text(encoding="utf-8")
-          old='revision="oneplus/mt6895_t_13.1.0_oneplus_ace"'
-          new='revision="mt6895_t_13.1.0_oneplus_ace"'
-          n=s.count(old)
-          if n != 2:
-              raise SystemExit(f"unexpected Ace T stale revision count: {n}")
-          p.write_text(s.replace(old,new),encoding="utf-8")
-          print("ACE_T_MT6895_BRANCH_FIXED")
+          p = Path(".repo/manifests/oneplus_ace_t.xml")
+          s = p.read_text(encoding="utf-8")
+          legacy = 'revision="oneplus/mt6895_t_13.1.0_oneplus_ace"'
+          fixed = 'revision="mt6895_t_13.1.0_oneplus_ace"'
+          old_count, new_count = s.count(legacy), s.count(fixed)
+          if old_count + new_count != 2:
+              raise SystemExit(f"unexpected Ace T source revisions: old={old_count}, fixed={new_count}")
+          if old_count:
+              p.write_text(s.replace(legacy, fixed), encoding="utf-8")
+          readback = p.read_text(encoding="utf-8")
+          if readback.count(fixed) != 2 or legacy in readback:
+              raise SystemExit("Ace T source revision verification failed")
+          print("ACE_T_MT6895_BRANCH_OK")
           PY
           fi
 
