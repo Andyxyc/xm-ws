@@ -1,0 +1,64 @@
+name: Ace5Pro SUSFS-Minimal Preflight 20261009
+
+on:
+  push:
+    branches: [SukiSU-Ultra]
+    paths:
+      - .github/workflows/ace5pro-susfs-minimal-preflight.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: SukiSU-Ultra
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Download pinned historical builder, without executing it
+        run: |
+          set -euo pipefail
+          curl -fLSs --retry 3 -o /tmp/ace5pro-builder-original.sh \
+            https://raw.githubusercontent.com/cctv18/oppo_oplus_realme_sm8750/0d90ea459dd5013ba5b1cb2e1ebc8c6d1544d746/local/builder_6.6.66.sh
+          cp /tmp/ace5pro-builder-original.sh /tmp/ace5pro-builder-safe.sh
+          python -m py_compile scripts/ace5pro_minimal_susfs_prepare.py
+          python scripts/ace5pro_minimal_susfs_prepare.py /tmp/ace5pro-builder-safe.sh
+          bash -n /tmp/ace5pro-builder-safe.sh
+          sh -n templates/ace5pro_minimal_susfs_anykernel.sh
+      - name: Validate source locks and unnecessary patches are absent
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          s=Path('/tmp/ace5pro-builder-safe.sh').read_text()
+          orig=Path('/tmp/ace5pro-builder-original.sh').read_text()
+          assert len(s)>14000 and len(orig)>14000
+          assert '9a56e8288fc62e2047a142114faeb9467447311d' in s
+          assert '0730de4f5d46ee2997f953101b0f608c0b400b38' in s
+          assert '70fa0e092a2c81060823f8ae526eac14fdda2930' in s
+          assert 'CONFIG_KSU_SUSFS=y' in s
+          assert 'CONFIG_KSU=y' in s
+          assert '|| true\n  patch -p1' not in s
+          for banned in ['patch -p1 -F 3 < 69_hide_stuff.patch',
+                         'cve-2026-43499-rtmutex-6.6.patch',
+                         'CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y']:
+              assert banned not in s,banned
+          for disabled in ['SPOOF_UNAME','SPOOF_CMDLINE_OR_BOOTCONFIG','OPEN_REDIRECT',
+                           'SUS_MAP','ENABLE_LOG','HIDE_KSU_SUSFS_SYMBOLS']:
+              assert f'# CONFIG_KSU_SUSFS_{disabled} is not set' in s
+          installer=Path('templates/ace5pro_minimal_susfs_anykernel.sh').read_text()
+          assert 'BLOCK=boot' in installer
+          for value in ['PKR110','OP60EBL1','Android 16','6.6.66-android15-8-']:
+              assert value in installer
+          assert 'module install' not in installer
+          assert 'flash_boot' in installer and 'write_boot' in installer
+          print('PASS: pinned source, only SukiSU/SUSFS changes, no other patches')
+          print('PASS: boot-only installer requires device/Android/kernel checks')
+          PY
