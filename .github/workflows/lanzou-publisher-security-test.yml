@@ -111,3 +111,61 @@ jobs:
                                    'PHPSESSID':'fake_session_test'}
           print('PASS: optional third Cookie forwarded only when configured')
           PY
+
+      - name: Test real-folder-API login check without network
+        run: |
+          python - <<'PY'
+          import runpy,sys,types
+          api=types.ModuleType('lanzou.api')
+          module=types.ModuleType('lanzou')
+          class Base:
+              SUCCESS=0
+              FAILED=-1
+              NETWORK_ERROR=9
+              def __init__(self):
+                  self._headers={'User-Agent':'test'}
+                  self._timeout=2
+                  self._doupload_url='https://pc.woozooo.com/doupload.php'
+          api.LanZouCloud=Base
+          sys.modules['lanzou']=module
+          sys.modules['lanzou.api']=api
+          bundle=runpy.run_path('scripts/publish_lanzou_ak3.py')
+          class Cookies(dict):
+              pass
+          class Response:
+              status_code=200
+              is_redirect=False
+              headers={}
+              def __init__(self,data):
+                  self.data=data
+              def raise_for_status(self):
+                  pass
+              def json(self):
+                  return self.data
+          class Session:
+              def __init__(self,data):
+                  self.data=data
+                  self.cookies=Cookies()
+                  self.requests=[]
+              def request(self,method,url,**kwargs):
+                  assert method=='POST'
+                  assert url=='https://pc.woozooo.com/doupload.php?uid=123456'
+                  assert kwargs['data']=={'task':47,'folder_id':-1}
+                  assert kwargs['verify'] is True
+                  assert kwargs['allow_redirects'] is False
+                  self.requests.append(url)
+                  return Response(self.data)
+          expected={'ylogin':'123456','phpdisk_info':'test-cookie'}
+          for payload,code in [
+              ({'zt':1,'info':[],'text':[]},Base.SUCCESS),
+              ({'zt':9,'info':'','text':''},Base.FAILED),
+              ({'zt':1,'info':[],'text':'invalid'},Base.FAILED)
+          ]:
+              client=bundle['make_secure_client']()
+              session=Session(payload)
+              client._session=session
+              assert client.login_by_cookie(expected)==code
+              assert session.cookies==expected
+              assert len(session.requests)==1
+          print('PASS: read-only LanZouCloud authentication accepts zt=1 only')
+          PY
