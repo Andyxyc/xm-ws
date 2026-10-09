@@ -16,6 +16,7 @@ import sys
 import tempfile
 import urllib.error
 import urllib.request
+from urllib.parse import urljoin, urlsplit
 import zipfile
 from pathlib import Path
 
@@ -138,22 +139,37 @@ def make_secure_client():
 
     class SafeClient(LanZouCloud):
         def _safe_request(self, method, url, *, data=None, **kwargs):
-            if not url.startswith("https://pc.woozooo.com/"):
-                raise PublishError("Refusing unapproved authentication host")
+            # Authentication cookies are usable only on the verified LanZouCloud
+            # management origin. Never follow an off-origin redirect.
             kwargs.pop("verify", None)
+            kwargs.pop("allow_redirects", None)
             kwargs.setdefault("headers", self._headers)
             kwargs["timeout"] = min(kwargs.get("timeout", self._timeout), 120)
-            try:
-                # A cookie from an unrestricted domain must never follow
-                # redirects to another host.
-                response = self._session.request(method, url, data=data,
-                                                 verify=True, allow_redirects=False, **kwargs)
-                if response.is_redirect:
-                    raise PublishError("Unexpected authentication redirect blocked")
-                response.raise_for_status()
-                return response
-            except requests.RequestException as exc:
-                raise PublishError(f"LanZouCloud HTTPS failure: {type(exc).__name__}") from exc
+            for hop in range(4):
+                parsed = urlsplit(url)
+                if (parsed.scheme != "https" or
+                        parsed.hostname != "pc.woozooo.com" or
+                        parsed.port not in (None, 443) or
+                        parsed.username or parsed.password):
+                    raise PublishError("LanZouCloud authentication request to unapproved host blocked")
+                try:
+                    response = self._session.request(
+                        method, url, data=data, verify=True,
+                        allow_redirects=False, **kwargs)
+                    if response.is_redirect:
+                        destination = response.headers.get("Location", "")
+                        if not destination or method != "GET":
+                            raise PublishError("Unexpected LanZouCloud upload redirect blocked")
+                        url = urljoin(url, destination)
+                        # Revalidate the destination before issuing another request.
+                        continue
+                    response.raise_for_status()
+                    return response
+                except requests.RequestException as exc:
+                    raise PublishError(
+                        f"LanZouCloud HTTPS failure: {type(exc).__name__}"
+                    ) from exc
+            raise PublishError("Too many LanZouCloud same-origin login redirects")
 
         def _get(self, url, **kwargs):
             return self._safe_request("GET", url, **kwargs)
