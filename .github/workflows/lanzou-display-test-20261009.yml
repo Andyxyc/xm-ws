@@ -1,0 +1,25 @@
+name: Lanzou Display Rename Unit Tests
+on:
+  push:
+    branches: [SukiSU-Ultra]
+    paths:
+      - .github/workflows/lanzou-display-test-20261009.yml
+permissions:
+  contents: read
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: SukiSU-Ultra
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Compile Python and run fully isolated cloud tests
+        run: |
+          set -euo pipefail
+          python -m py_compile scripts/lanzou_display_names.py scripts/lanzou_migrate_display_20261009.py scripts/test_lanzou_display_20261009.py
+          python -u scripts/test_lanzou_display_20261009.py
