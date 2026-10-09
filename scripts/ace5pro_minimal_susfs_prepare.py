@@ -135,14 +135,13 @@ def prepare(source: str) -> str:
     one(s[start:finish], "# No additional rtmutex or subsystem modifications.\n\n",
         "remove rtmutex patch")
 
-    # Pin the AnyKernel3 packaging tools too. Only the guarded installer
-    # template replaces its shell entrypoint in our packaging step.
+    # Pin the AnyKernel3 core tools; our installer is added after compilation.
     one(
         "git clone https://github.com/cctv18/AnyKernel3 --depth=1",
-        "git clone https://github.com/cctv18/AnyKernel3 --depth=1\\n"
-        "test \\\"$(git -C AnyKernel3 rev-parse HEAD)\\\" = "
-        "\\\"091ee586e1a5d5c1c1c957d48fe7c61638d04dc4\\\" "
-        "|| { echo 'AK3 core source changed; aborting'; exit 42; }",
+        "git clone https://github.com/cctv18/AnyKernel3 --depth=1\n"
+        'test "$(git -C AnyKernel3 rev-parse HEAD)" = '
+        '"091ee586e1a5d5c1c1c957d48fe7c61638d04dc4" '
+        '|| { echo "AK3 core changed; aborting"; exit 42; }',
         "pin AnyKernel3 core",
     )
 
