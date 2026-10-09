@@ -1,0 +1,103 @@
+name: Lanzou Kernel-first Rename Safety Tests
+on:
+  push:
+    branches: [SukiSU-Ultra]
+    paths:
+      - .github/workflows/lanzou-kernel-first-tests-20261009.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: SukiSU-Ultra
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify version-first renames with no credentials
+        run: |
+          python -m py_compile scripts/publish_lanzou_ak3.py scripts/rename_lanzou_kernel_first_20261009.py
+          python - <<'PY'
+          import os, re, sys, json, tempfile, types
+          from pathlib import Path
+          from types import SimpleNamespace as N
+          sys.path.insert(0,'scripts')
+          from publish_lanzou_ak3 import validated_artifact_name, version_first_filename, PublishError
+          import rename_lanzou_kernel_first_20261009 as renamer
+          examples=[
+              ('OnePlusAce5Race','16.0.0','6.1.157','KPM_ILH'),
+              ('OnePlus10Pro','16.0','5.10.236','KPM_ILH'),
+              ('OnePlus13t','16.0.0','6.6.89','KPM_ILH_HMBIRD'),
+              ('OnePlus15t','16.0','6.12.38','KPM_ILH'),
+              ('OnePlusAce3Pro','14.1.0','6.1.75','KPM_ILH'),
+              ('OnePlusAce5Pro','15.0.0','6.6.66','KPM_ILH')
+          ]
+          for model,android,kernel,extra in examples:
+              artifact=f'AnyKernel3_SukiSUUltra_40959_{model}_Android{android}({kernel})_{extra}'
+              safe=re.sub(r'[^A-Za-z0-9._-]+','_',artifact).strip('._-')
+              assert validated_artifact_name(artifact)[0]==model
+              name=version_first_filename(safe+'_run37884290075.zip')
+              assert name==f'{kernel}_{model}_Android{android}_SukiSU40959_{extra}_run37884290075.zip',name
+          try:
+              version_first_filename('AnyKernel3_SukiSUUltra_40959_OnePlusAce5Race.zip')
+              raise AssertionError('Unverifiable version must be rejected')
+          except PublishError: pass
+          print('PASS: all 6 device-version naming examples')
+          lanzou=types.ModuleType('lanzou')
+          api=types.ModuleType('lanzou.api')
+          class SDK:
+              SUCCESS=0
+              FAILED=-1
+          api.LanZouCloud=SDK
+          sys.modules['lanzou']=lanzou
+          sys.modules['lanzou.api']=api
+          legacy='AnyKernel3_SukiSUUltra_40959_OnePlusAce5Race_Android16.0.0_6.1.157__KPM_ILH_run37884290075.zip'
+          expected='6.1.157_OnePlusAce5Race_Android16.0.0_SukiSU40959_KPM_ILH_run37884290075.zip'
+          class FakeCloud:
+              def __init__(self,deny=False,conflict=False):
+                  self.deny=deny
+                  self.folders={-1:[N(name='一加suki',id=1)],
+                                  1:[N(name='suki-40959',id=2)],
+                                  2:[N(name='OnePlusAce5Race',id=3)]}
+                  self.files=[N(name=legacy,id=42),N(name='other.zip',id=7)]
+                  if conflict: self.files.append(N(name=expected,id=8))
+                  self.renames=[]
+              def login_by_cookie(self,cookie): return 0
+              def get_dir_list(self,folder_id): return self.folders.get(folder_id,[])
+              def get_file_list(self,folder_id): return self.files if folder_id==3 else []
+              def rename_file(self,file_id,stem):
+                  self.renames.append((file_id,stem))
+                  if self.deny: return -1
+                  self.files[0].name=stem+'.zip'
+                  return 0
+          client=FakeCloud()
+          choices,skipped=renamer.list_candidates(client)
+          assert len(choices)==1 and choices[0]['new_name']==expected
+          with tempfile.TemporaryDirectory() as tmp:
+              renamer.REPORT=Path(tmp)/'test.json'
+              renamer.make_secure_client=lambda:client
+              renamer.credentials=lambda:{'ylogin':'123456','phpdisk_info':'not-real'}
+              sys.argv=['rename','--dry-run']
+              assert renamer.main()==0 and not client.renames
+              assert json.loads(renamer.REPORT.read_text())['state']=='preflight_complete'
+              sys.argv=['rename']
+              assert renamer.main()==0
+              assert client.files[0].name==expected and client.files[1].name=='other.zip'
+              assert client.renames[0][0]==42
+              assert not renamer.list_candidates(client)[0]
+              print('PASS: dry run, idempotence, remote readback, untouched unrelated')
+              client=FakeCloud(deny=True)
+              renamer.make_secure_client=lambda:client
+              assert renamer.main()==1
+              assert client.files[0].name==legacy and len(client.renames)==1
+              print('PASS: membership denial stops without destructive fallback')
+              client=FakeCloud(conflict=True)
+              renamer.make_secure_client=lambda:client
+              assert renamer.main()==0 and not client.renames
+              print('PASS: collisions skipped')
+          PY
