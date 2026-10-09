@@ -1,4 +1,5 @@
 name: Ace5Pro SUSFS-Minimal Preflight 20261009
+run-name: Revalidate pinned stable-trial source and AK3 - ${{ github.run_id }}
 
 on:
   push:
