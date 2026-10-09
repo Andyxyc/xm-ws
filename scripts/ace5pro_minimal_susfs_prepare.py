@@ -67,17 +67,10 @@ def prepare(source: str) -> str:
   if grep -q '^KSU_VERSION_FULL := ' KernelSU/kernel/Makefile; then
     sed -i 's|^KSU_VERSION_FULL := .*|KSU_VERSION_FULL := v4.2.0-xiaomo@builtin[70fa0e09]|' KernelSU/kernel/Makefile
   fi
-  UAPI_FILE=""
-  for path in KernelSU/kernel/include/uapi/supercall.h KernelSU/uapi/supercall.h; do
-    [ -f "$path" ] && {{ UAPI_FILE="$path"; break; }}
-  done
-  if [ -n "$UAPI_FILE" ]; then
-    CURRENT_UAPI="$(grep -ohE 'KERNEL_SU_UAPI_VERSION[^0-9]*[0-9]+' "$UAPI_FILE" | grep -oE '[0-9]+' | tail -n1 || true)"
-    if [ "[object Object]" -lt 5 ]; then
-      patch -p1 --forward -d KernelSU < "$GITHUB_WORKSPACE/scripts/ksu_uapi_sync/builtin-uapi5.patch"
-    fi
-  fi
+  # Keep only Linux 6.6 compilation fixes, then backport the real
+  # kernel/manager UAPI protocol. Manager 40959-5 rejects kernel UAPI2.
   bash "$GITHUB_WORKSPACE/scripts/ace5pro_sukisu_minimal_compat.sh" KernelSU
+  bash "$GITHUB_WORKSPACE/scripts/ace5pro_fix_uapi5.sh" KernelSU
   echo 'CONFIG_KSU_FULL_NAME_FORMAT="%TAG_NAME%-%COMMIT_SHA%@xiaomo"' >> ./common/arch/arm64/configs/gki_defconfig
 '''
     one(old, replacement, "pin SukiSU branch")
