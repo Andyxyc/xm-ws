@@ -79,3 +79,35 @@ jobs:
           except Err: pass
           print('PASS: python syntax and seven isolated redirect/delete safety tests')
           PY
+
+      - name: Check optional session Cookie forwarding without network
+        run: |
+          python - <<'PY'
+          import os,runpy,sys
+          mod=runpy.run_path('scripts/publish_lanzou_ak3.py')
+          func=mod['main']
+          ns=func.__globals__
+          ns['select_artifact']=lambda *args: (
+              {'id':12,'name':'AnyKernel3_SukiSUUltra_40959_OnePlusAce5Race_Android16'},
+              ('OnePlusAce5Race','OnePlusAce5Race_test')
+          )
+          ns['fetch_artifact']=lambda *args: None
+          ns['make_flashable_zip']=lambda *args: {'sha256':'test','size_bytes':1,'member_count':3}
+          ns['make_secure_client']=lambda: object()
+          received=[]
+          def publish(client,zip_path,model,cookies):
+              received.append(cookies.copy())
+              return {'folder':'test','remote_name':'test','remote_file_id':123}
+          ns['publish_to_lanzou']=publish
+          sys.argv=['publish','--repo','Andyxyc/xm-ws','--run-id','37884290075']
+          os.environ.update(GH_TOKEN='fake-token',LANZOU_YLOGIN='123456',
+                            LANZOU_PHPDISK_INFO='test-only-value')
+          os.environ.pop('LANZOU_PHPSESSID',None)
+          assert func()==0
+          assert received.pop(0)=={'ylogin':'123456','phpdisk_info':'test-only-value'}
+          os.environ['LANZOU_PHPSESSID']='fake_session_test'
+          assert func()==0
+          assert received.pop(0)=={'ylogin':'123456','phpdisk_info':'test-only-value',
+                                   'PHPSESSID':'fake_session_test'}
+          print('PASS: optional third Cookie forwarded only when configured')
+          PY
