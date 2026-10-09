@@ -1,0 +1,69 @@
+name: OnePlus SukiSU Lanzou Backfill 20261009
+
+on:
+  push:
+    branches: [SukiSU-Ultra]
+    paths:
+      - .github/workflows/lanzou-backfill-20261009.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: oneplus-sukisu-lanzou-backfill-20261009
+  cancel-in-progress: false
+
+jobs:
+  upload-completed-ak3:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - name: Checkout release branch
+        uses: actions/checkout@v4
+        with:
+          ref: SukiSU-Ultra
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Check configuration without exposing credentials
+        env:
+          LANZOU_YLOGIN: ${{ secrets.LANZOU_YLOGIN }}
+          LANZOU_PHPDISK_INFO: ${{ secrets.LANZOU_PHPDISK_INFO }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$LANZOU_YLOGIN" || -z "$LANZOU_PHPDISK_INFO" ]]; then
+            echo "::error::LANZOU_YLOGIN or LANZOU_PHPDISK_INFO is missing"
+            exit 2
+          fi
+          python -m py_compile scripts/publish_lanzou_ak3.py scripts/backfill_lanzou_ak3_20261009.py
+          echo "Uploader configuration available; source syntax passes"
+
+      - name: Install pinned LanZouCloud client
+        run: |
+          python -m pip install --disable-pip-version-check --no-cache-dir \
+            'git+https://github.com/zaxtyson/LanZouCloud-API.git@3bb917f6baf873d83b1e8e6fb2df74c60c4d8cb3'
+
+      - name: Backfill completed OnePlus AK3 into per-model cloud folders
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LANZOU_YLOGIN: ${{ secrets.LANZOU_YLOGIN }}
+          LANZOU_PHPDISK_INFO: ${{ secrets.LANZOU_PHPDISK_INFO }}
+          PYTHONUNBUFFERED: '1'
+        run: |
+          set -euo pipefail
+          python scripts/backfill_lanzou_ak3_20261009.py
+
+      - name: Save non-secret upload receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: oneplus-sukisu-lanzou-backfill-report-${{ github.run_id }}
+          path: lanzou-backfill-report.json
+          if-no-files-found: warn
+          retention-days: 7
