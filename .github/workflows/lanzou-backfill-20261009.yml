@@ -47,6 +47,8 @@ jobs:
       - name: Install pinned LanZouCloud client
         run: |
           python -m pip install --disable-pip-version-check --no-cache-dir \
+            'requests==2.32.5' 'requests-toolbelt==1.0.0' 'setuptools'
+          python -m pip install --disable-pip-version-check --no-cache-dir --no-build-isolation \
             'git+https://github.com/zaxtyson/LanZouCloud-API.git@3bb917f6baf873d83b1e8e6fb2df74c60c4d8cb3'
 
       - name: Backfill completed OnePlus AK3 into per-model cloud folders
