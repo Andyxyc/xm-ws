@@ -21,29 +21,40 @@ assert folder_name("OnePlusAce5Race") == "一加Ace5竞速版"
 
 samples = [
     ("6.1.157_OnePlusAce5Race_Android16.0.0_SukiSU40959_KPM_ILH_run37884290075.zip",
-     "安卓16.0.0_常规_内核6.1.157_OnePlusAce5Race_SukiSU40959_KPM_ILH_run37884290075.zip"),
+     "Android16.0.0_Kernel6.1.157_OnePlusAce5Race_SukiSU40959_KPM_ILH_run37884290075.zip"),
     ("6.6.118_OnePlus13_Android16.0.0_SukiSU40959_KPM_ILH_HMBIRD_run37615216318.zip",
-     "安卓16.0.0_风驰_内核6.6.118_OnePlus13_SukiSU40959_KPM_ILH_HMBIRD_run37615216318.zip"),
+     "Android16.0.0_HMBIRD_Kernel6.6.118_OnePlus13_SukiSU40959_KPM_ILH_HMBIRD_run37615216318.zip"),
     ("6.6.118_OnePlus13_Android16.0.0_SukiSU40959_KPM_ILH_run37888241390.zip",
-     "安卓16.0.0_常规_内核6.6.118_OnePlus13_SukiSU40959_KPM_ILH_run37888241390.zip"),
+     "Android16.0.0_Kernel6.6.118_OnePlus13_SukiSU40959_KPM_ILH_run37888241390.zip"),
     ("6.1.118_OnePlusPadPro_Android15.0.0_SukiSU40959_KPM_ILH_run37630818892.zip",
-     "安卓15.0.0_常规_内核6.1.118_OnePlusPadPro_SukiSU40959_KPM_ILH_run37630818892.zip"),
+     "Android15.0.0_Kernel6.1.118_OnePlusPadPro_SukiSU40959_KPM_ILH_run37630818892.zip"),
     ("6.1.118_OnePlusPadPro_Android16.0.0_SukiSU40959_KPM_ILH_run37888245161.zip",
-     "安卓16.0.0_常规_内核6.1.118_OnePlusPadPro_SukiSU40959_KPM_ILH_run37888245161.zip"),
+     "Android16.0.0_Kernel6.1.118_OnePlusPadPro_SukiSU40959_KPM_ILH_run37888245161.zip"),
     ("6.6.118_OnePlusAce5Pro_Android16.0.0_SukiSU40959_KPM_ILH_HMBIRD_run37630854781.zip",
-     "安卓16.0.0_风驰_内核6.6.118_OnePlusAce5Pro_SukiSU40959_KPM_ILH_HMBIRD_run37630854781.zip"),
+     "Android16.0.0_HMBIRD_Kernel6.6.118_OnePlusAce5Pro_SukiSU40959_KPM_ILH_HMBIRD_run37630854781.zip"),
 ]
 for old, expected in samples:
     assert display_filename(old) == expected
     assert display_filename(expected) == expected
 for wrong in ["random.zip", "6.1.118_OnePlusUnmapped_Android16.0.0_SukiSU40959_KPM_ILH_run1.zip",
-              "安卓16.0.0_风驰_内核6.6.118_OnePlus13_SukiSU40959_KPM_ILH_run11.zip"]:
+              "Android16.0.0_HMBIRD_Kernel6.6.118_OnePlus13_SukiSU40959_KPM_ILH_run11.zip"]:
     try:
         display_filename(wrong)
         raise AssertionError("Unverifiable filename accepted")
     except ValueError:
         pass
 print("PASS: 57 unique folder labels and 6 representative exact filename transformations", flush=True)
+
+# Recovery of filenames modified by the earlier Chinese ZIP migration.
+for old, expected in [
+    ("安卓16.0.0_常规_内核6.1.157_OnePlusAce5Race_SukiSU40959_KPM_ILH_run37884290075.zip",samples[0][1]),
+    ("安卓16.0.0_风驰_内核6.6.118_OnePlus13_SukiSU40959_KPM_ILH_HMBIRD_run37615216318.zip",samples[1][1]),
+    ("安卓16.0.0_常规_内核6.6.118_OnePlus13_SukiSU40959_KPM_ILH_run37888241390.zip",samples[2][1]),
+]:
+    assert display_filename(old) == expected
+    assert expected.isascii()
+print("PASS: already-renamed Chinese ZIP names convert back to ASCII safely", flush=True)
+
 
 lanzou = types.ModuleType("lanzou")
 api = types.ModuleType("lanzou.api")
