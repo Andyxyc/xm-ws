@@ -16,6 +16,7 @@ jobs:
         env:
           LANZOU_YLOGIN: ${{ secrets.LANZOU_YLOGIN }}
           LANZOU_PHPDISK_INFO: ${{ secrets.LANZOU_PHPDISK_INFO }}
+          LANZOU_PHPSESSID: ${{ secrets.LANZOU_PHPSESSID }}
         run: |
           python - <<'PY'
           import os, urllib.parse
@@ -24,6 +25,15 @@ jobs:
           info=os.environ.get('LANZOU_PHPDISK_INFO','')
           if not ylogin or not info:
               raise SystemExit('Missing authentication secret')
+          php_session=os.environ.get('LANZOU_PHPSESSID','')
+          print('COOKIE_SHAPE',
+                'ylogin_decimal=',bool(ylogin.isdecimal()),
+                'ylogin_digits_5to12=',bool(ylogin.isdecimal() and 5<=len(ylogin)<=12),
+                'phpdisk_long=',bool(len(info)>=150),
+                'phpdisk_no_label=',not info.lower().startswith('phpdisk_info='),
+                'phpdisk_no_whitespace=',not any(ch.isspace() for ch in info),
+                'session_cookie_configured=',bool(php_session),
+                flush=True)
           if not ylogin.isdecimal():
               print('ylogin_format_invalid_expected_digits')
               raise SystemExit(2)
