@@ -1,5 +1,5 @@
 name: Lanzou OnePlus SukiSU AK3 Pilot 20261009
-run-name: Ace5Race upload endpoint diagnostic - run ${{ github.run_id }}
+run-name: Ace5Race html5up pilot - run ${{ github.run_id }}
 on:
   push:
     branches: [SukiSU-Ultra]
