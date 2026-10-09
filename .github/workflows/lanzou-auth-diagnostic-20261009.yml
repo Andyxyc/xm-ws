@@ -1,4 +1,4 @@
-name: Lanzou auth redirect diagnostic
+name: Lanzou read-only auth check
 on:
   push:
     branches: [SukiSU-Ultra]
@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Follow strictly same-origin account redirects with secrets hidden
+      - name: Compare anonymous and authenticated read-only folder requests
         env:
           LANZOU_YLOGIN: ${{ secrets.LANZOU_YLOGIN }}
           LANZOU_PHPDISK_INFO: ${{ secrets.LANZOU_PHPDISK_INFO }}
@@ -20,43 +20,47 @@ jobs:
           python - <<'PY'
           import os, urllib.parse
           import requests
-          entry = 'https://pc.woozooo.com/account.php'
-          ident = {'ylogin': os.environ.get('LANZOU_YLOGIN', ''),
-                   'phpdisk_info': os.environ.get('LANZOU_PHPDISK_INFO', '')}
-          if not all(ident.values()):
-              raise SystemExit('One of the two secret values is missing')
-          for label, use_cookies in [('without_cookie', False), ('with_cookie', True)]:
-              s = requests.Session()
-              if use_cookies:
-                  for key,value in ident.items():
-                      s.cookies.set(key, value, domain='pc.woozooo.com', path='/')
-              url = entry
-              for n in range(5):
-                  parsed = urllib.parse.urlsplit(url)
-                  if parsed.scheme != 'https' or parsed.hostname != 'pc.woozooo.com' or parsed.port not in (None,443):
-                      print(label,'disallowed_redirect_host', parsed.hostname, flush=True)
-                      break
+          ylogin=os.environ.get('LANZOU_YLOGIN','')
+          info=os.environ.get('LANZOU_PHPDISK_INFO','')
+          if not ylogin or not info:
+              raise SystemExit('Missing authentication secret')
+          if not ylogin.isdecimal():
+              print('ylogin_format_invalid_expected_digits')
+              raise SystemExit(2)
+          hdr={'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+               'Referer':'https://pc.woozooo.com/mydisk.php',
+               'Accept-Language':'zh-CN,zh;q=0.9'}
+          for label, use_cookie in [('anonymous',False),('with_secrets',True)]:
+              s=requests.Session()
+              if use_cookie:
+                  s.cookies.set('ylogin',ylogin,domain='pc.woozooo.com',path='/')
+                  s.cookies.set('phpdisk_info',info,domain='pc.woozooo.com',path='/')
+              for endpoint,method in [('mydisk.php','GET'),('doupload.php','POST')]:
+                  url='https://pc.woozooo.com/'+endpoint
+                  kwargs={'headers':hdr,'timeout':18,'allow_redirects':False,'verify':True}
+                  if method=='POST':
+                      url+='?uid='+ylogin
+                      kwargs['data']={'task':47,'folder_id':-1}
                   try:
-                      r = s.get(url,headers={
-                         'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-                         'Referer':'https://pc.woozooo.com/mydisk.php',
-                         'Accept-Language':'zh-CN,zh;q=0.9'},
-                         timeout=15, allow_redirects=False, verify=True)
+                      r=s.request(method,url,**kwargs)
                   except requests.RequestException as exc:
-                      print(label,'request_error',type(exc).__name__,flush=True)
-                      break
-                  location = r.headers.get('Location')
-                  resolved = urllib.parse.urlsplit(urllib.parse.urljoin(url,location)) if location else None
-                  markers=('网盘用户登录' in r.text,'退出系统成功' in r.text,'我的文件' in r.text)
-                  print(label,'hop',n,'http',r.status_code,
-                       'path',parsed.path,
-                       'query_keys',sorted(set(urllib.parse.parse_qs(parsed.query))),
-                       'new_path',resolved.path if resolved else 'none',
-                       'new_host',resolved.hostname if resolved else 'none',
-                       'new_query_keys',sorted(set(urllib.parse.parse_qs(resolved.query))) if resolved else [],
-                       'login_page',markers[0],'logout_success',markers[1],'has_files_label',markers[2],
-                       flush=True)
-                  if not location or r.status_code not in (301,302,303,307,308):
-                      break
-                  url=urllib.parse.urljoin(url,location)
+                      print(label,endpoint,'request_error',type(exc).__name__,flush=True)
+                      continue
+                  loc=r.headers.get('Location','')
+                  tgt=urllib.parse.urlsplit(urllib.parse.urljoin(url,loc)) if loc else None
+                  output={'actor':label,'endpoint':endpoint,'http_status':r.status_code,
+                          'redirect_host':tgt.hostname if tgt else None,
+                          'redirect_path':tgt.path if tgt else None,
+                          'content_type':r.headers.get('Content-Type','').split(';')[0],
+                          'login_form':('网盘用户登录' in r.text)}
+                  try:
+                      j=r.json()
+                      output.update(json_type=type(j).__name__,
+                                    json_keys=sorted(j.keys()) if isinstance(j,dict) else [],
+                                    zt=j.get('zt') if isinstance(j,dict) else None,
+                                    info_type=type(j.get('info')).__name__ if isinstance(j,dict) else None,
+                                    text_type=type(j.get('text')).__name__ if isinstance(j,dict) else None,
+                                    text_count=len(j['text']) if isinstance(j,dict) and isinstance(j.get('text'),list) else None)
+                  except ValueError: pass
+                  print('RESULT',output,flush=True)
           PY
