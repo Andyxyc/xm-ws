@@ -135,6 +135,17 @@ def prepare(source: str) -> str:
     one(s[start:finish], "# No additional rtmutex or subsystem modifications.\n\n",
         "remove rtmutex patch")
 
+    # Pin the AnyKernel3 packaging tools too. Only the guarded installer
+    # template replaces its shell entrypoint in our packaging step.
+    one(
+        "git clone https://github.com/cctv18/AnyKernel3 --depth=1",
+        "git clone https://github.com/cctv18/AnyKernel3 --depth=1\\n"
+        "test \\\"$(git -C AnyKernel3 rev-parse HEAD)\\\" = "
+        "\\\"091ee586e1a5d5c1c1c957d48fe7c61638d04dc4\\\" "
+        "|| { echo 'AK3 core source changed; aborting'; exit 42; }",
+        "pin AnyKernel3 core",
+    )
+
     # Do not bypass errors of source-controlled optional patches, since none
     # are enabled in the preset. Force the clang compile to fail on missing
     # symbols, rather than produce an incomplete KSU/SUSFS Image.
