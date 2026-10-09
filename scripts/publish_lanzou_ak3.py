@@ -45,6 +45,34 @@ def validated_artifact_name(name: str) -> tuple[str, str] | None:
     return model_part, safe_name
 
 
+
+def version_first_filename(old_filename: str) -> str:
+    """Promote verified kernel version to the beginning of an AK3 ZIP name.
+
+    Names originate from the completed OnePlus kernel build artifact and carry
+    the unambiguous kernel version in its Android(...) build descriptor.
+    Refuse an unfamiliar format rather than guess a kernel version.
+    """
+    match = re.fullmatch(
+        r"AnyKernel3_SukiSUUltra_40959_"
+        r"(?P<model>OnePlus[A-Za-z0-9_-]{2,80})_"
+        r"Android(?P<android>\\d+(?:\\.\\d+){1,2})_"
+        r"(?P<kernel>\\d+\\.\\d+\\.\\d+)_+"
+        r"(?P<extras>[A-Za-z0-9_-]+)_"
+        r"run(?P<run>\\d+)\\.zip",
+        old_filename,
+    )
+    if match is None:
+        raise PublishError("AK3 kernel version could not be parsed safely")
+    model, android, kernel, extras, run_id = (
+        match.group("model"), match.group("android"), match.group("kernel"),
+        match.group("extras").strip("_"), match.group("run")
+    )
+    if not extras or len(old_filename) > 235:
+        raise PublishError("AK3 filename unsupported for safe renaming")
+    return f"{kernel}_{model}_Android{android}_SukiSU40959_{extras}_run{run_id}.zip"
+
+
 def github_api(path: str, token: str) -> dict:
     if not path.startswith("repos/") or ".." in path:
         raise PublishError("Invalid GitHub API path")
@@ -308,7 +336,7 @@ def main() -> int:
         folder = temp / "artifact"
         folder.mkdir()
         fetch_artifact(args.repo, args.run_id, item["name"], folder)
-        package = temp / (safe_name + f"_run{args.run_id}.zip")
+        package = temp / version_first_filename(safe_name + f"_run{args.run_id}.zip")
         proof = make_flashable_zip(folder, package)
         client = make_secure_client()
         remote = publish_to_lanzou(client, package, model, cookies)
