@@ -61,8 +61,8 @@ curl -fLSs --retry 3 "$HMBIRD_BASE/hmbird_config.patch" \
 cd "$WORKDIR/kernel_workspace/common"
 for p in fengchi.patch overwriter.patch hmbird_config.patch; do
   echo "Checking $p..."
-  patch --batch --dry-run -p1 -F3 --forward < "$HMBIRD_FILES/$p"
-  patch --batch -p1 -F3 --forward < "$HMBIRD_FILES/$p"
+  patch --batch --dry-run -p1 -F0 --forward < "$HMBIRD_FILES/$p"
+  patch --batch -p1 -F0 --forward < "$HMBIRD_FILES/$p"
 done
 [ -f drivers/of/overwriter/overwrite_configs/convert_configs.sh ] || {{
   echo "HMBIRD DT overlay converter missing; aborting"; exit 44;
@@ -92,6 +92,11 @@ def adapt(s: str) -> str:
         s = s.replace(original, replacement, 1)
 
     replace_one(OLD_CLONE + "\n" + OLD_GUARD, CLONE, "6.6.66 13->6.6.89 PKR110 source")
+    replace_one(
+        'echo "===== 欧加真SM8750通用6.6.66 A15 OKI内核本地编译脚本 By Coolapk@cctv18 ====="',
+        'echo "===== Ace5Pro PKR110 A16 6.6.89 (cctv18-based, source pinned) ====="',
+        "identify migrated builder",
+    )
     replace_one(
         "# ===== 禁用 defconfig 检查 =====",
         HMBIRD + "# ===== 禁用 defconfig 检查 =====",
