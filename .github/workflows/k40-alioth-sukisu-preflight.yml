@@ -1,0 +1,61 @@
+name: Redmi K40 Alioth SukiSU 4.2 NonGKI Compatibility Check
+on:
+  push:
+    branches: [SukiSU-Ultra]
+    paths:
+      - .github/workflows/k40-alioth-sukisu-preflight.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: SukiSU-Ultra
+          persist-credentials: false
+      - name: Verify Non-GKI preparation script syntax and device config
+        run: |
+          set -euo pipefail
+          bash -n scripts/k40-alioth-sukisu-prepare.sh
+          KERNEL_COMMIT=8b19a1dd26ae283a2bfc33781905255339aae485
+          BASE="https://raw.githubusercontent.com/zfdx123/kernel_xiaomi_alioth/$KERNEL_COMMIT"
+          curl -fLSs --retry 3 "$BASE/arch/arm64/configs/alioth_defconfig" -o /tmp/k40-defconfig
+          curl -fLSs --retry 3 "$BASE/init/Kconfig" -o /tmp/k40-Kconfig
+          curl -fLSs --retry 3 "$BASE/Makefile" -o /tmp/k40-Makefile
+          curl -fLSs --retry 3 "$BASE/fs/open.c" -o /tmp/k40-open.c
+          curl -fLSs --retry 3 "$BASE/kernel/ksu_manual_hook.c" -o /tmp/k40-manual-stubs.c
+          grep -qx 'VERSION = 4' /tmp/k40-Makefile
+          grep -qx 'PATCHLEVEL = 19' /tmp/k40-Makefile
+          grep -qx 'SUBLEVEL = 325' /tmp/k40-Makefile
+          grep -qx 'CONFIG_MACH_XIAOMI_ALIOTH=y' /tmp/k40-defconfig
+          grep -qx 'CONFIG_SCHED_WALT=y' /tmp/k40-defconfig
+          grep -qx 'CONFIG_KSU_MANUAL_HOOK=y' /tmp/k40-defconfig
+          grep -qF 'config KSU_MANUAL_HOOK' /tmp/k40-Kconfig
+          grep -qF 'ksu_handle_faccessat' /tmp/k40-open.c
+          grep -qF '__weak ksu_handle_faccessat' /tmp/k40-manual-stubs.c
+          echo 'PASS: Redmi K40 alioth pin, WALT and Non-GKI manual hook sources'
+
+      - name: Integrate exact latest builtin SukiSU UAPI5 in isolated test
+        run: |
+          set -euo pipefail
+          SUKI_COMMIT=6c284e957feaa9a388a9f1c37dc4ec80d95e434b
+          git clone --quiet --depth 1 --single-branch --branch builtin \
+            https://github.com/SukiSU-Ultra/SukiSU-Ultra.git /tmp/KSU
+          test "$(git -C /tmp/KSU rev-parse HEAD)" = "$SUKI_COMMIT"
+          UAPI=/tmp/KSU/kernel/include/uapi/supercall.h
+          grep -qF 'KERNEL_SU_UAPI_VERSION, 2' "$UAPI"
+          grep -qF 'KSU_DRIVER_PERMISSION_SU_SESSION' /tmp/KSU/kernel/supercall/supercall.c
+          grep -qF 'EVENT_SERVICES' /tmp/KSU/kernel/supercall/dispatch.c
+          grep -qF 'cmd.uapi_version = KERNEL_SU_UAPI_VERSION' /tmp/KSU/kernel/supercall/dispatch.c
+          patch --batch --forward --fuzz=0 --dry-run -p1 -d /tmp/KSU \
+            < scripts/ksu_uapi_sync/builtin-uapi5.patch
+          patch --batch --forward --fuzz=0 -p1 -d /tmp/KSU \
+            < scripts/ksu_uapi_sync/builtin-uapi5.patch
+          grep -qF 'KERNEL_SU_UAPI_VERSION, 5' "$UAPI"
+          grep -qF 'KSU_GET_INFO_FLAG_BUNDLED' "$UAPI"
+          grep -qF 'int ksu_handle_faccessat(' /tmp/KSU/kernel/feature/sucompat.c
+          grep -qF 'int ksu_handle_execveat(' /tmp/KSU/kernel/feature/sucompat.c
+          echo 'PASS: Latest SukiSU builtin UAPI5, original Non-GKI user-pointer hooks and fd driver'
