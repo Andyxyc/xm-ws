@@ -95,7 +95,7 @@ jobs:
               CONFIG_KALLSYMS=y \
               CONFIG_KALLSYMS_ALL=y \
               CONFIG_SCHED_WALT=y \
-              CONFIG_MACH_XIAOMI_ALIOTH=y; do
+              CONFIG_BOARD_ALIOTH=y; do
             grep -qxF "$value" out/.config || {
               echo "::error::Required alioth/Root kernel symbol not enabled: $value"
               exit 40
