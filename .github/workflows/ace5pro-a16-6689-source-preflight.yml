@@ -1,0 +1,68 @@
+name: Ace5Pro Android16 6.6.89 Official Source Port Preflight
+on:
+  push:
+    branches: [SukiSU-Ultra]
+    paths:
+      - .github/workflows/ace5pro-a16-6689-source-preflight.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify-compatible-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: SukiSU-Ultra
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Checkout exact OnePlus Ace5Pro Android16 6.6.89 source from referenced working-profile manifest
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/ace5pro-source
+          git clone --depth=1 --filter=blob:none --no-checkout \
+            --branch oneplus/sm8750_b_16.0.0_oneplus_ace5_pro \
+            https://github.com/OnePlusOSS/android_kernel_common_oneplus_sm8750.git \
+            /tmp/ace5pro-source/common
+          git -C /tmp/ace5pro-source/common fetch --no-tags --depth=1 origin \
+            f4dd5c0457798af7e2e9cf5a6edce3447947d067
+          git -C /tmp/ace5pro-source/common checkout --detach \
+            f4dd5c0457798af7e2e9cf5a6edce3447947d067
+          test "$(git -C /tmp/ace5pro-source/common rev-parse HEAD)" = \
+            f4dd5c0457798af7e2e9cf5a6edce3447947d067
+          grep -qx 'SUBLEVEL = 89' /tmp/ace5pro-source/common/Makefile
+          echo 'PASS: using official exact PKR110 16.0.8.300 A16 kernel 6.6.89'
+
+      - name: Validate WildKernels model-specific HMBIRD patch matches exact OnePlus source
+        run: |
+          set -euo pipefail
+          curl -fLSs --retry 3 \
+            https://raw.githubusercontent.com/WildKernels/kernel_patches/41ae18b35d20e0c6ac04116785a4a1089528ae94/oneplus/hmbird/deprecated/fengchi_OP-ACE-5-PRO_A16.patch \
+            -o /tmp/ace5pro-hmbird.patch
+          test "$(wc -c < /tmp/ace5pro-hmbird.patch)" -gt 500000
+          cd /tmp/ace5pro-source/common
+          patch --batch --dry-run -p1 --forward -F3 < /tmp/ace5pro-hmbird.patch
+          echo 'PASS: exact Ace5Pro 6.6.89 HMBIRD scheduler patch dry-run clean'
+
+      - name: Check strict SUSFS-only kernel hook patches without changing official source
+        run: |
+          set -euo pipefail
+          curl -fLSs --retry 3 \
+            https://raw.githubusercontent.com/cctv18/susfs4oki/0730de4f5d46ee2997f953101b0f608c0b400b38/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch \
+            -o /tmp/ace5pro-susfs.patch
+          printf '%s\n' '# CONFIG_KSU_SUSFS_SUS_MAP is not set' > /tmp/ace5pro-minimal-builder.sh
+          python scripts/ace5pro_susfs_rebase_minimal.py \
+            /tmp/ace5pro-susfs.patch --builder /tmp/ace5pro-minimal-builder.sh
+          cd /tmp/ace5pro-source/common
+          patch --batch --dry-run -p1 --forward -F0 < /tmp/ace5pro-susfs.patch
+          echo 'PASS: SUSFS patch can be applied on pinned Ace5Pro 6.6.89 official source'
+
+      - name: Report source-only verification
+        if: always()
+        run: |
+          echo 'Official PKR110 source: OnePlusOSS 6.6.89 f4dd5c0457798af7e2e9cf5a6edce3447947d067'
+          echo 'Reference manifest: WildKernels OnePlus_KernelSU_SUSFS A16 Ace5Pro 6.6.89'
+          echo 'No kernel or flashable ZIP has been created by this preflight.'
