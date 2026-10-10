@@ -28,13 +28,13 @@ jobs:
             https://github.com/OnePlusOSS/android_kernel_common_oneplus_sm8750.git \
             /tmp/ace5pro-source/common
           git -C /tmp/ace5pro-source/common fetch --no-tags --depth=1 origin \
-            f4dd5c0457798af7e2e9cf5a6edce3447947d067
+            386808c1de0dc56f00e7b6505a722737ed628e6f
           git -C /tmp/ace5pro-source/common checkout --detach \
-            f4dd5c0457798af7e2e9cf5a6edce3447947d067
+            386808c1de0dc56f00e7b6505a722737ed628e6f
           test "$(git -C /tmp/ace5pro-source/common rev-parse HEAD)" = \
-            f4dd5c0457798af7e2e9cf5a6edce3447947d067
+            386808c1de0dc56f00e7b6505a722737ed628e6f
           grep -qx 'SUBLEVEL = 89' /tmp/ace5pro-source/common/Makefile
-          echo 'PASS: using official exact PKR110 16.0.8.300 A16 kernel 6.6.89'
+          echo 'PASS: using official exact PKR110 16.0.5.701 A16 kernel 6.6.89'
 
       - name: Validate WildKernels model-specific HMBIRD patch matches exact OnePlus source
         run: |
@@ -44,7 +44,7 @@ jobs:
             -o /tmp/ace5pro-hmbird.patch
           test "$(wc -c < /tmp/ace5pro-hmbird.patch)" -gt 500000
           cd /tmp/ace5pro-source/common
-          patch --batch --dry-run -p1 --forward -F3 < /tmp/ace5pro-hmbird.patch
+          patch --batch --dry-run -p1 --forward -F0 < /tmp/ace5pro-hmbird.patch
           echo 'PASS: exact Ace5Pro 6.6.89 HMBIRD scheduler patch dry-run clean'
 
       - name: Check strict SUSFS-only kernel hook patches without changing official source
@@ -63,6 +63,6 @@ jobs:
       - name: Report source-only verification
         if: always()
         run: |
-          echo 'Official PKR110 source: OnePlusOSS 6.6.89 f4dd5c0457798af7e2e9cf5a6edce3447947d067'
+          echo 'Official PKR110 source: OnePlusOSS 6.6.89 386808c1de0dc56f00e7b6505a722737ed628e6f'
           echo 'Reference manifest: WildKernels OnePlus_KernelSU_SUSFS A16 Ace5Pro 6.6.89'
           echo 'No kernel or flashable ZIP has been created by this preflight.'
