@@ -44,11 +44,11 @@ jobs:
           done
           echo "PASS: independent pinned PKR110 source and SUSFS/HMBIRD matching tests"
 
-      - name: Prepare reduced 6.6.89 source builder
+      - name: Download pinned original builder and port it to official PKR110 6.6.89
         run: |
           set -euo pipefail
           curl -fLSs --retry 3 \
-            https://raw.githubusercontent.com/cctv18/oppo_oplus_realme_sm8750/0d90ea459dd5013ba5b1cb2e1ebc8c6d1544d746/local/builder_6.6.89.sh \
+            https://raw.githubusercontent.com/cctv18/oppo_oplus_realme_sm8750/0d90ea459dd5013ba5b1cb2e1ebc8c6d1544d746/local/builder_6.6.66.sh \
             -o ace5pro-minimal-builder.sh
           python -m py_compile scripts/ace5pro_minimal_susfs_prepare.py
           python scripts/ace5pro_minimal_susfs_prepare.py ace5pro-minimal-builder.sh
