@@ -1,0 +1,54 @@
+name: Ace5Pro 6.6.89 SukiSU Port Preparation Tests
+on:
+  push:
+    branches: [SukiSU-Ultra]
+    paths:
+      - .github/workflows/ace5pro-6689-port-unit.yml
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: SukiSU-Ultra
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Test exact original-to-PKR110 builder adaptation, no kernel execution
+        run: |
+          set -euo pipefail
+          python -m py_compile scripts/ace5pro_minimal_susfs_prepare.py scripts/ace5pro_6689_port_prepare.py
+          bash -n scripts/ace5pro_fix_uapi5.sh
+          curl -fLSs --retry 3 \
+            https://raw.githubusercontent.com/cctv18/oppo_oplus_realme_sm8750/0d90ea459dd5013ba5b1cb2e1ebc8c6d1544d746/local/builder_6.6.66.sh \
+            -o /tmp/ace5pro-6689-builder.sh
+          python scripts/ace5pro_minimal_susfs_prepare.py /tmp/ace5pro-6689-builder.sh
+          python scripts/ace5pro_6689_port_prepare.py /tmp/ace5pro-6689-builder.sh
+          bash -n /tmp/ace5pro-6689-builder.sh
+          sh -n templates/ace5pro_a16_6689_port_anykernel.sh
+          python - <<'PY'
+          from pathlib import Path
+          text=Path('/tmp/ace5pro-6689-builder.sh').read_text()
+          assert len(text)>14000,len(text)
+          for key in ['f4dd5c0457798af7e2e9cf5a6edce3447947d067',
+                      '41ae18b35d20e0c6ac04116785a4a1089528ae94',
+                      'ace5pro_fix_uapi5.sh',
+                      'ace5pro_susfs_rebase_minimal.py',
+                      'fengchi_OP-ACE-5-PRO_A16.patch',
+                      'CONFIG_HMBIRD_SCHED=y']:
+              assert key in text,key
+          for old in ['oneplus_13_6.6.66 common',
+                      '9a56e8288fc62e2047a142114faeb9467447311d',
+                      '[object Object]']:
+              assert old not in text,old
+          guard=Path('templates/ace5pro_a16_6689_port_anykernel.sh').read_text()
+          for required in ['PKR110','OP60EBL1','6.6.89-android15-8-',
+                           'BLOCK=boot','Author: 闲鱼 心中都是莫']:
+              assert required in guard,required
+          assert '6.6.66' not in guard
+          print('PASS: exact Ace5Pro official 6.6.89 pin, SUSFS+UAPI5, Wild HMBIRD, guarded installer')
+          PY
