@@ -22,7 +22,7 @@ grep -qxF 'SUBLEVEL = 325' "$KERNEL_ROOT/Makefile" || error "Expected Linux 4.19
 grep -qxF 'VERSION = 4' "$KERNEL_ROOT/Makefile" || error "Expected 4.19 major"
 grep -qxF 'PATCHLEVEL = 19' "$KERNEL_ROOT/Makefile" || error "Expected 4.19 minor"
 [[ -s "$KERNEL_ROOT/arch/arm64/configs/alioth_defconfig" ]] || error "Alioth defconfig missing"
-grep -qF 'CONFIG_MACH_XIAOMI_ALIOTH=y' "$KERNEL_ROOT/arch/arm64/configs/alioth_defconfig" || error "Not an alioth device tree"
+grep -qF 'CONFIG_BOARD_ALIOTH=y' "$KERNEL_ROOT/arch/arm64/configs/alioth_defconfig" || error "Not an alioth device tree"
 grep -qF 'CONFIG_SCHED_WALT=y' "$KERNEL_ROOT/arch/arm64/configs/alioth_defconfig" || error "Original Xiaomi WALT scheduler missing"
 grep -qF 'config KSU_MANUAL_HOOK' "$KERNEL_ROOT/init/Kconfig" || error "Non-GKI manual hook Kconfig missing"
 grep -qF 'ksu_handle_execveat' "$KERNEL_ROOT/fs/exec.c" || error "Alioth KSU manual exec hook missing"
