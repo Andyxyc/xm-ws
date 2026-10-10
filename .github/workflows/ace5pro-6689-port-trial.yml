@@ -55,7 +55,7 @@ jobs:
           python scripts/ace5pro_6689_port_prepare.py ace5pro-minimal-builder.sh
           bash -n ace5pro-minimal-builder.sh
           sh -n templates/ace5pro_a16_6689_port_anykernel.sh
-          echo "Validated pinned SukiSU40959 + core SUSFS; no KPM or vendor scheduler patch."
+          echo "Validated pinned SukiSU40959 + core SUSFS; no KPM; model-matched HMBIRD vendor scheduler checked with zero-fuzz."
 
       - name: Compile official PKR110 6.6.89 with UAPI5 SUSFS and matching HMBIRD scheduler
         env:
@@ -113,7 +113,7 @@ jobs:
               exit 51
             fi
           done
-          strings -a "$IMAGE" | grep -m1 '^Linux version 6\.6\.66-' || {
+          strings -a "$IMAGE" | grep -m1 '^Linux version 6\.6\.89-android15-8-' || {
             echo "::error::Image kernel base does not match stock 6.6.89"
             exit 52
           }
@@ -136,6 +136,7 @@ jobs:
           test -s "$BASE/tools/ak3-core.sh"
           test ! -e "$BASE/kpn.zip"
           test ! -e "$BASE/zram.zip"
+          rm -f "$BASE/ksu_module_susfs.zip"
           test ! -e "$BASE/ksu_module_susfs.zip"
           test ! -e "$BASE/patch_linux"
           cat > "$BASE/minimal-susfs-test-info.txt" <<'EOF'
@@ -161,8 +162,8 @@ jobs:
           REFERENCE_AUTHOR=XiaoXin
           REFERENCE_ZIP_SHA256=61aa095cc2126a0e894c5f07dcd05218efb595bd9c5da0c628a957635adb0566
           SOURCE_REPO=OnePlusOSS/android_kernel_common_oneplus_sm8750
-          SOURCE_COMMIT=f4dd5c0457798af7e2e9cf5a6edce3447947d067
-          SOURCE_OS=PKR110_16.0.8.300(CN01)
+          SOURCE_COMMIT=386808c1de0dc56f00e7b6505a722737ed628e6f
+          SOURCE_OS=PKR110_16.0.5.701(CN01)
           HMBIRD_PATCH_SOURCE=WildKernels/kernel_patches
           HMBIRD_PATCH_COMMIT=41ae18b35d20e0c6ac04116785a4a1089528ae94
           AUTHOR=闲鱼 心中都是莫
