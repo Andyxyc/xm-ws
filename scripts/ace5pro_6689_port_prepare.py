@@ -8,6 +8,7 @@ Upstream acknowledgments:
 - WildKernels/kernel_patches: dedicated 6.6.89 A16 HMBIRD patch set
 - XiaoXin: user's known-booting 40830 6.6.89 AK3 image/reference
 
+Source baseline: official PKR110_16.0.5.701(CN01), nearest released source to target 16.0.5.700.
 Only commit-pinned OnePlus and WildKernels source revisions are used.
 No reference ZIP binary or script is included in the new build.
 """
@@ -27,7 +28,7 @@ OLD_GUARD = (
     "{ echo 'Kernel source pin changed; refusing build'; exit 40; }"
 )
 
-SOURCE_SHA = "f4dd5c0457798af7e2e9cf5a6edce3447947d067"
+SOURCE_SHA = "386808c1de0dc56f00e7b6505a722737ed628e6f"
 WILD_PATCH_SHA = "41ae18b35d20e0c6ac04116785a4a1089528ae94"
 BRANCH = "oneplus/sm8750_b_16.0.0_oneplus_ace5_pro"
 
