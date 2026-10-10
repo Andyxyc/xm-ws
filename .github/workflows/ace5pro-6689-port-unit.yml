@@ -34,7 +34,7 @@ jobs:
           from pathlib import Path
           text=Path('/tmp/ace5pro-6689-builder.sh').read_text()
           assert len(text)>14000,len(text)
-          for key in ['f4dd5c0457798af7e2e9cf5a6edce3447947d067',
+          for key in ['386808c1de0dc56f00e7b6505a722737ed628e6f',
                       '41ae18b35d20e0c6ac04116785a4a1089528ae94',
                       'ace5pro_fix_uapi5.sh',
                       'ace5pro_susfs_rebase_minimal.py',
