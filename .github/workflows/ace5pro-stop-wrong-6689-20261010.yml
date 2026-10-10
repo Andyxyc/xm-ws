@@ -1,0 +1,28 @@
+name: Stop Incorrect Ace5Pro 6.6.89 Build
+on:
+  push:
+    branches: [SukiSU-Ultra]
+    paths:
+      - .github/workflows/ace5pro-stop-wrong-6689-20261010.yml
+permissions:
+  contents: read
+  actions: write
+jobs:
+  stop-wrong-version:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Cancel incompatible 6.6.89 trial only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          RUN_ID=38024717510
+          REPO="$GITHUB_REPOSITORY"
+          state="$(gh api "repos/$REPO/actions/runs/$RUN_ID" --jq '.status')"
+          if [[ "$state" != "completed" ]]; then
+            gh run cancel "$RUN_ID" --repo "$REPO"
+            echo "Cancellation submitted for the mistaken Ace5Pro 6.6.89 trial only."
+          else
+            echo "Wrong-version trial already ended; no mutation needed."
+          fi
