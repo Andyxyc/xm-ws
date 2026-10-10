@@ -53,6 +53,16 @@ esac
 [ "$MODEL" = "PKR110" ] || abort "Refusing flash: expected PKR110, got [$MODEL]"
 [ "$DEVICE" = "OP60EBL1" ] || abort "Refusing flash: expected OP60EBL1, got [$DEVICE]"
 [ "$ANDROID" = "16" ] || abort "Refusing flash: expected Android16, got [$ANDROID]"
+# Fail closed if the target ROM build cannot be established from Android properties.
+# A16.0.8.300-based vendor modules must not be assumed compatible with this ROM.
+ROM_ID="$(getprop ro.build.version.ota 2>/dev/null | tr -d '\r\n')"
+[ -n "$ROM_ID" ] || ROM_ID="$(getprop ro.build.version.incremental 2>/dev/null | tr -d '\r\n')"
+[ -n "$ROM_ID" ] || ROM_ID="$(getprop ro.build.display.id 2>/dev/null | tr -d '\r\n')"
+case "$ROM_ID" in
+  *PKR110*16.0.5.700*|*16.0.5.700*PKR110*) ;;
+  *) abort "Refusing flash: requires PKR110 ColorOS 16.0.5.700, got [$ROM_ID]" ;;
+esac
+
 case "$RUNNING_KERNEL" in
   6.6.89-android15-8-*) ;;
   *) abort "Refusing flash: stock kernel base mismatch ($RUNNING_KERNEL)" ;;
