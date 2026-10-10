@@ -1,0 +1,220 @@
+name: Redmi K40 Alioth NonGKI SukiSU Ultra 4.2 UAPI5 Trial
+run-name: RedmiK40-Alioth-4.19.325-SukiSU-UAPI5-NonGKI-${{ github.run_id }}
+
+on:
+  push:
+    branches: [SukiSU-Ultra]
+    paths:
+      - .github/workflows/k40-alioth-sukisu-build.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: redmi-k40-alioth-sukisu-nongki-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 110
+    env:
+      TZ: Asia/Shanghai
+      SOURCE_SHA: 8b19a1dd26ae283a2bfc33781905255339aae485
+      SUKI_SHA: 6c284e957feaa9a388a9f1c37dc4ec80d95e434b
+      TARGET: alioth
+      KERNEL_MAJOR_MINOR: '4.19'
+      KERNEL_PATCHLEVEL: '325'
+      KERNEL_ROOT: ${{ github.workspace }}/kernel-src
+      MAKEFLAGS: '--no-print-directory'
+
+    steps:
+      - name: Checkout standalone K40 integration
+        uses: actions/checkout@v4
+        with:
+          ref: SukiSU-Ultra
+          persist-credentials: false
+
+      - name: Verify NonGKI source and Root protocol preflight
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          conclusion="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/38055890911" --jq .conclusion)"
+          test "$conclusion" = success
+          bash -n scripts/k40-alioth-sukisu-prepare.sh
+          sh -n templates/k40-alioth-sukisu-nongki-anykernel.sh
+          echo "PASS: pinned Linux 4.19 source and current SukiSU UAPI5 source checks"
+
+      - name: Install required Ubuntu arm64 kernel toolchain
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends -y \
+            clang lld llvm llvm-dev bc bison flex libssl-dev libelf-dev \
+            make gcc g++ git zip unzip python3 perl rsync cpio kmod \
+            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
+          echo "Compiler: $(clang --version | head -n1)"
+          echo "Lld: $(ld.lld --version)"
+          df -h .
+
+      - name: Checkout exact verified Redmi K40 4.19.325 kernel source
+        run: |
+          set -euo pipefail
+          git clone --single-branch --branch master --depth=1 --filter=blob:none \
+            https://github.com/zfdx123/kernel_xiaomi_alioth.git "$KERNEL_ROOT"
+          test "$(git -C "$KERNEL_ROOT" rev-parse HEAD)" = "$SOURCE_SHA"
+          grep -qx 'SUBLEVEL = 325' "$KERNEL_ROOT/Makefile"
+          test -f "$KERNEL_ROOT/arch/arm64/configs/alioth_defconfig"
+          echo "PASS: exact alioth Linux 4.19.325 source"
+
+      - name: Integrate exact current SukiSU builtin for Linux 4.19 manually
+        run: |
+          set -euo pipefail
+          bash scripts/k40-alioth-sukisu-prepare.sh "$KERNEL_ROOT"
+          test "$(git -C "$KERNEL_ROOT/KernelSU" rev-parse HEAD)" = "$SUKI_SHA"
+          grep -qF 'KERNEL_SU_UAPI_VERSION, 5' "$KERNEL_ROOT/KernelSU/kernel/include/uapi/supercall.h"
+          test -L "$KERNEL_ROOT/drivers/kernelsu"
+          test -s "$KERNEL_ROOT/K40_SOURCE_PROVENANCE.txt"
+          echo 'PASS: manually wired latest SukiSU v4.2.0 UAPI5 without SUSFS/KPM'
+
+      - name: Generate alioth 4.19 kernel config and verify it preserves vendor WALT
+        run: |
+          set -euo pipefail
+          cd "$KERNEL_ROOT"
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
+            alioth_defconfig
+          test -s out/.config
+          for value in \
+              CONFIG_KSU=y \
+              CONFIG_KSU_MANUAL_HOOK=y \
+              CONFIG_KALLSYMS=y \
+              CONFIG_KALLSYMS_ALL=y \
+              CONFIG_SCHED_WALT=y \
+              CONFIG_MACH_XIAOMI_ALIOTH=y; do
+            grep -qxF "$value" out/.config || {
+              echo "::error::Required alioth/Root kernel symbol not enabled: $value"
+              exit 40
+            }
+          done
+          for forbidden in \
+              CONFIG_KSU_SUSFS=y \
+              CONFIG_KPM=y \
+              CONFIG_UNAME_OVERRIDE=y \
+              CONFIG_KSU_FEATURE_ADBROOT=y; do
+            if grep -qxF "$forbidden" out/.config; then
+              echo "::error::Unexpected optional/non-universal subsystem: $forbidden"
+              exit 41
+            fi
+          done
+          cp out/.config "$GITHUB_WORKSPACE/alioth-compiled-config.txt"
+          echo "PASS: WALT retained; SukiSU + manual Hook enabled; extra patches disabled"
+
+      - name: Compile Android arm64 alioth kernel (Non-GKI)
+        run: |
+          set -euo pipefail
+          cd "$KERNEL_ROOT"
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
+            -j3 Image.gz-dtb vmlinux 2>&1 | tee "$GITHUB_WORKSPACE/k40-build.log"
+          IMG=out/arch/arm64/boot/Image.gz-dtb
+          test -s "$IMG"
+          test "$(stat -c %s "$IMG")" -gt 6000000
+          file "$IMG"
+          sha256sum "$IMG" | tee "$GITHUB_WORKSPACE/k40-image.sha256"
+
+      - name: Verify actual non-GKI SukiSU hook symbols are linked, not only placeholders
+        run: |
+          set -euo pipefail
+          cd "$KERNEL_ROOT"
+          VMLINUX=out/vmlinux
+          test -s "$VMLINUX"
+          for sym in \
+              ksu_handle_execveat \
+              ksu_handle_faccessat \
+              ksu_handle_stat \
+              ksu_handle_sys_reboot \
+              ksu_handle_sys_read; do
+            if ! nm "$VMLINUX" | awk -v s="$sym" '$3==s && $2~/^[Tt]$/ {found=1} END{exit !found}'; then
+              echo "::error::Real SukiSU hook not linked strongly: $sym (weak stub is insufficient)"
+              exit 42
+            fi
+          done
+          grep -q 'CONFIG_KSU=y' out/.config
+          grep -q 'CONFIG_KSU_MANUAL_HOOK=y' out/.config
+          strings -a "$VMLINUX" | grep -m1 'Linux version 4.19.325' || {
+            echo "::error::Incorrect kernel major/patchlevel"
+            exit 43
+          }
+          echo 'PASS: actual strong SukiSU manual hook symbols and 4.19.325 verified'
+
+      - name: Package guarded boot-only AnyKernel3 TEST ZIP
+        run: |
+          set -euo pipefail
+          AK3="$GITHUB_WORKSPACE/AnyKernel3"
+          git clone --quiet --depth 1 --single-branch --branch master \
+            https://github.com/osm0sis/AnyKernel3.git "$AK3"
+          test "$(git -C "$AK3" rev-parse HEAD)" = 020dfeccf9d7e962a48400fc94d3e451df92eead
+          rm -rf "$AK3/.git"
+          cp "$KERNEL_ROOT/out/arch/arm64/boot/Image.gz-dtb" "$AK3/Image.gz-dtb"
+          cp "$GITHUB_WORKSPACE/templates/k40-alioth-sukisu-nongki-anykernel.sh" "$AK3/anykernel.sh"
+          cp "$KERNEL_ROOT/K40_SOURCE_PROVENANCE.txt" "$AK3/K40_SOURCE_PROVENANCE.txt"
+          chmod 755 "$AK3/anykernel.sh"
+          sh -n "$AK3/anykernel.sh"
+          test -s "$AK3/tools/ak3-core.sh"
+          test -s "$AK3/Image.gz-dtb"
+          cat > "$AK3/K40_README_CN.txt" <<'EOF'
+          Redmi K40 / alioth only — SukiSU Ultra v4.2.0 Non-GKI trial.
+          Android 11/12/13/14/15/16 compatibility is NOT proven.
+          MIUI/HyperOS across-ROM support is NOT established by compilation.
+          Preserve original boot.img before testing.
+          Touch only boot; do not change dtbo, vendor_boot, vbmeta, data, or modules.
+          Do not use on Redmi K40 Gaming, K40 Pro, or other variants.
+          Original authors: zfdx123, LeviMarvin, SukiSU-Ultra, osm0sis.
+          Custom integration author: 闲鱼 心中都是莫
+          EOF
+          OUT_NAME="RedmiK40_alioth_NonGKI_4.19.325_SukiSUUltra_v4.2.0_UAPI5_TEST_UNVERIFIED_run${GITHUB_RUN_ID}.zip"
+          ( cd "$AK3" && zip -qr "$GITHUB_WORKSPACE/$OUT_NAME" . )
+          OUT_NAME="$OUT_NAME" python3 - <<'PY'
+          import os, zipfile
+          path=os.environ['OUT_NAME']
+          with zipfile.ZipFile(path) as z:
+              assert z.testzip() is None, 'ZIP CRC error'
+              names=set(z.namelist())
+              assert {'anykernel.sh','Image.gz-dtb','tools/ak3-core.sh','K40_SOURCE_PROVENANCE.txt','K40_README_CN.txt'} <= names
+              assert 'boot.img' not in names
+              assert not any('dtbo.img' in x for x in names)
+              manifest=z.read('K40_SOURCE_PROVENANCE.txt').decode('utf-8')
+              assert 'KERNEL_VERSION=4.19.325' in manifest
+              assert 'SUKISU_UAPI=5' in manifest
+          print('PASS: AK3 boot-only package structure and CRC')
+          PY
+          sha256sum "$OUT_NAME" > "$OUT_NAME.sha256"
+          echo "AK3_ZIP=$OUT_NAME" >> "$GITHUB_ENV"
+
+      - name: Upload UNTESTED AK3 and its SHA256 (no LanZouCloud publication)
+        uses: actions/upload-artifact@v4
+        with:
+          name: RedmiK40_alioth_NonGKI_SukiSUUltra_v4.2.0_UAPI5_UNTESTED_${{ github.run_id }}
+          path: |
+            ${{ env.AK3_ZIP }}
+            ${{ env.AK3_ZIP }}.sha256
+          if-no-files-found: error
+          retention-days: 15
+          compression-level: 0
+
+      - name: Save diagnostic build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: RedmiK40_alioth_build_diagnostics_${{ github.run_id }}
+          path: |
+            k40-build.log
+            alioth-compiled-config.txt
+          if-no-files-found: ignore
+          retention-days: 7
