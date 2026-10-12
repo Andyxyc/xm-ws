@@ -1,4 +1,4 @@
-import re, tempfile, unittest
+import re, shutil, subprocess, tempfile, unittest
 from pathlib import Path
 import pad2pro_susfs_rebase as r
 
@@ -58,5 +58,66 @@ class RebaseTests(unittest.TestCase):
             self.assertFalse(output.exists())
     def test_git_blob(self):
         self.assertEqual(r.git_blob(b''),'e69de29bb2d1d6434b8b29ae775ad8c2e48c5391')
+
+
+    def test_macro_negation_groups_entire_expansion(self):
+        result=r.rebase_text(self.fixture())
+        self.assertIn('!(SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file)))', result)
+        self.assertNotIn('!SUSFS_IS_INODE_SUS_MAP(', result)
+    def test_generated_predicate_compiles_and_all_null_flag_cases(self):
+        compiler=shutil.which('clang') or shutil.which('cc')
+        self.assertIsNotNone(compiler, 'A host C compiler is required; do not skip this regression')
+        # Use the generated expression and the pinned upstream macro body.
+        # This checks expansion semantics, not just Python or shell syntax.
+        condition=next(line[1:].strip() for line in r.CURSOR_NEW.splitlines()
+                       if 'if (!vma->vm_file ||' in line)
+        source=r'''#include <stdbool.h>
+#include <stddef.h>
+struct address_space { unsigned long flags; };
+struct inode { struct address_space *i_mapping; };
+struct file { struct inode *node; };
+struct vm_area_struct { struct file *vm_file; };
+static bool app;
+static bool test_bit(unsigned int bit, const unsigned long *flags) { return !!(*flags & (1UL << bit)); }
+static bool susfs_is_current_proc_umounted_app(void) { return app; }
+#define AS_FLAGS_SUS_MAP 0
+#define unlikely(x) (x)
+#define file_inode(f) ((f)->node)
+#define SUSFS_IS_INODE_SUS_MAP(inode) \
+        inode && inode->i_mapping && \
+        unlikely(test_bit(AS_FLAGS_SUS_MAP, &inode->i_mapping->flags)) && \
+        susfs_is_current_proc_umounted_app()
+static bool should_gather(struct vm_area_struct *vma) {
+    CONDITION
+        return true;
+    }
+    return false;
+}
+int main(void) {
+    for (unsigned int bits=0; bits<32; ++bits) {
+        bool has_file=!!(bits & 1), has_inode=!!(bits & 2);
+        bool has_mapping=!!(bits & 4), marked=!!(bits & 8);
+        app=!!(bits & 16);
+        struct address_space mapping={.flags=marked ? 1UL : 0UL};
+        struct inode node={.i_mapping=has_mapping ? &mapping : NULL};
+        struct file file={.node=has_inode ? &node : NULL};
+        struct vm_area_struct vma={.vm_file=has_file ? &file : NULL};
+        bool expected=!(has_file && has_inode && has_mapping && marked && app);
+        if (should_gather(&vma) != expected) return (int)bits+1;
+    }
+    return 0;
+}
+'''.replace('CONDITION',condition)
+        with tempfile.TemporaryDirectory(prefix='平板 C 宏 & 回归 ! ') as d:
+            d=Path(d); c=d/'predicate.c'; binary=d/'predicate'
+            c.write_text(source)
+            flags=['-std=c11','-O2','-Wall','-Wextra','-Werror','-Wparentheses']
+            if 'clang' in Path(compiler).name:
+                flags.append('-Wlogical-op-parentheses')
+            built=subprocess.run([compiler,*flags,str(c),'-o',str(binary)],
+                                 capture_output=True,text=True,timeout=30)
+            self.assertEqual(built.returncode,0,built.stderr)
+            checked=subprocess.run([str(binary)],capture_output=True,text=True,timeout=10)
+            self.assertEqual(checked.returncode,0,'Predicate/null case failed: '+str(checked.returncode))
 
 if __name__=='__main__': unittest.main(verbosity=2)
