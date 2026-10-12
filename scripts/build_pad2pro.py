@@ -7,6 +7,7 @@ The published .701 source is NOT represented as exact .801 firmware source.
 from __future__ import annotations
 import argparse, hashlib, json, os, re, shutil, subprocess, sys
 from pathlib import Path
+from pad2pro_susfs_rebase import rebase as rebase_susfs
 
 PINS = {
     'common': ('https://github.com/OnePlusOSS/android_kernel_common_oneplus_sm8750.git', '039d4b06c8751a2feaddbb8423304b0f2452520a'),
@@ -118,7 +119,11 @@ def prepare():
     for rel in ['fs','include/linux']:
         for src in (susfs/'kernel_patches'/rel).iterdir():
             if src.is_file(): shutil.copy2(src,common/rel/src.name)
-    patch_file(common, susfs/'kernel_patches/50_add_susfs_in_gki-android15-6.6.patch')
+    # Adapt only the fingerprinted OEM task_mmu.c section; retain SUSFS features.
+    rebased = DIAG/'susfs-opd2413-rebased.patch'
+    rebase_susfs(susfs/'kernel_patches/50_add_susfs_in_gki-android15-6.6.patch',
+                 common/'fs/proc/task_mmu.c', rebased)
+    patch_file(common, rebased)
     patch_file(common, ROOT/'patches/unicode_bypass_fix_6.1+.patch')
     require(not list(common.rglob('*.rej')), 'Patch rejects remain')
     # Optional scheduling/compression/network add-ons are not substituted for stock.
@@ -196,6 +201,7 @@ def selftest():
         else: raise RuntimeError('Invalid image accepted')
         p.write_text('\n'.join(f'0x00000001 sym{i} vmlinux EXPORT_SYMBOL' for i in range(101)))
         require(len(symvers(p))==101,'Symbol version parser regression')
+    run([sys.executable, ROOT/'scripts/test_pad2pro_susfs_rebase.py'])
     print('PASS: local unit tests; no kernel build or device flashing in selftest')
 
 if __name__ == '__main__':
@@ -205,6 +211,6 @@ if __name__ == '__main__':
         if stage=='selftest': selftest()
         elif stage=='prepare': prepare()
         else: build(stage)
-    except (RuntimeError,OSError,subprocess.SubprocessError) as exc:
+    except (RuntimeError,ValueError,OSError,subprocess.SubprocessError) as exc:
         save('failure-'+stage+'.json',{'stage':stage,'error':str(exc),'status':'failed'})
         print('::error::'+str(exc),file=sys.stderr); sys.exit(1)
