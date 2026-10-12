@@ -41,9 +41,11 @@ CURSOR_OLD = (
     ' \t\t\t\tlast_vma_end = vma->vm_end;\n'
     '+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP\n'
 )
+# The SUSFS macro expands to an unparenthesized && chain. Negation must
+# enclose the complete expansion, including null guards and the app check.
 CURSOR_NEW = (
     '+#ifdef CONFIG_KSU_SUSFS_SUS_MAP\n'
-    '+\t\t\t\tif (!vma->vm_file || !SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file))) {\n'
+    '+\t\t\t\tif (!vma->vm_file || !(SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file)))) {\n'
     '+\t\t\t\t\tsmap_gather_stats(vma, &mss, last_vma_end);\n'
     '+\t\t\t\t}\n'
     '+#else\n'
