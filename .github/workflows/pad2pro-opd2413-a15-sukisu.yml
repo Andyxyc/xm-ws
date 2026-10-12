@@ -7,6 +7,8 @@ on:
     paths:
       - .github/workflows/pad2pro-opd2413-a15-sukisu.yml
       - scripts/build_pad2pro.py
+      - scripts/pad2pro_susfs_rebase.py
+      - scripts/test_pad2pro_susfs_rebase.py
       - templates/anykernel_pad2pro.sh
 permissions:
   contents: read
@@ -25,8 +27,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p pad2pro_diagnostics
-          python3 -m py_compile scripts/build_pad2pro.py
-          python3 scripts/build_pad2pro.py selftest | tee pad2pro_diagnostics/selftest.log
+          python3 -m py_compile scripts/build_pad2pro.py scripts/pad2pro_susfs_rebase.py scripts/test_pad2pro_susfs_rebase.py
+          python3 scripts/build_pad2pro.py selftest 2>&1 | tee pad2pro_diagnostics/selftest.log
           dash -n templates/anykernel_pad2pro.sh
           bash -n scripts/ace5pro_fix_uapi5.sh
       - name: Install compilation dependencies
