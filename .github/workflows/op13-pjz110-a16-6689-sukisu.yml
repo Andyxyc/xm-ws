@@ -16,7 +16,7 @@ env:
   # v111 pins (reproducible build).
   CCTV18_ASSETS_REF: "21db9e7d547ca625bd5aa734fb5dfc8b94ea48ef"
   CCTV18_KERNEL_COMMIT: "1fa251814f74c86488de8c765ea24375dfbfc094"
-  SUKISU_SETUP_REF: "f2201c472b607557ed8563e2d1b729af25f3111b"
+  SUKISU_SETUP_REF: "6c284e957feaa9a388a9f1c37dc4ec80d95e434b"
   AK3_REF: "020dfeccf9d7e962a48400fc94d3e451df92eead"
   CCACHE_MAXSIZE: 8G
 
@@ -30,15 +30,15 @@ on:
         options: [stock_daily, stock_plus, minimal_safe, debug_only]
         default: minimal_safe
       sukisu_ref:
-        description: "SukiSU Ultra ref. MUST BE PAIRED WITH susfs_ref AND with the manager APK. DEFAULT f2201c4 = builtin branch, no_su generation, and the newest builtin commit that actually compiles (HEAD e2912817 does not: kernel/feature/kernel_umount.c references kernel_umount_feature_set without defining it). Pair with susfs_ref 40e6c19 and INSTALL THE v4.2.0 MANAGER APK (SukiSU_v4.2.0_40900_releases.apk, version code 40900). v111 makes the driver REPORT 40900 to match it (GITHUB_COMMITS=3715); without that the driver reports a live API-derived number and the manager shows a permanent version mismatch, which rejects App Profile writes and breaks root. Its ksud also carries the susfs CLI needed to hide mounts. To stay on v4.1.3, use the OLD pair instead: sukisu 6c13a0695a1115e1000c998872b66f4ff5b2f11e + susfs 83dcd81e7e13440e1b8b756dea4e8311e54f4c3a."
+        description: "Pinned latest 2026-10-14 upstream builtin at 6c284e957feaa9a388a9f1c37dc4ec80d95e434b. Driver version is derived from this exact commit's git history and may differ from current released Manager 40900; manager compatibility remains to be tested."
         required: true
         type: string
-        default: "f2201c472b607557ed8563e2d1b729af25f3111b"
+        default: "6c284e957feaa9a388a9f1c37dc4ec80d95e434b"
       kpm_enable:
         description: "Enable SukiSU KPM support. Kernel support only; no random KPM modules bundled."
         required: true
         type: boolean
-        default: true
+        default: false
       multi_manager_support:
         description: "Enable SukiSU multi-manager support if the selected ref exposes it."
         required: true
@@ -51,7 +51,7 @@ on:
         options: ["On", "Off"]
         default: "On"
       susfs_ref:
-        description: "CCTV18 susfs4oki ref. v111 KEEPS 40e6c19 = SUSFS v2.2.0 ON PURPOSE. Do NOT bump this to v2.3.0 (383616f): v2.3.0 fs/exec.c calls ksu_install_su_fd(), which SukiSU builtin f2201c4 does NOT define, so the pair fails to link. The SukiSU driver also cannot advance -- builtin HEAD e2912817 fails to compile (kernel_umount_feature_set undefined). So this lane is pinned to the v2.2.0 pair (sukisu f2201c4 + susfs 40e6c19) which is verified to compile and has the no_su su-hook fix. The ReSukiSU lane CAN use v2.3.0 because ReSukiSU defines ksu_install_su_fd(). MUST MATCH sukisu_ref generation; a mismatch makes the kernel skip the su redirect for every app and shell."
+        description: "Retain last successfully compiled CCTV18 SUSFS v2.2.0 (40e6c19) for this new builtin integration trial. Exact pairing is checked during build and still requires device validation."
         required: true
         type: string
         default: "40e6c19ec2ca88804d6c2e3ddf52623af6685463"
@@ -1141,7 +1141,8 @@ jobs:
           fi
 
           if [ "${{ inputs.kpm_enable }}" = "true" ] && ! grep -q '^CONFIG_KPM=y' out/.config; then
-            echo "::warning::KPM requested but CONFIG_KPM=y is not present after olddefconfig. This SukiSU ref/kernel may not expose it."
+            echo "::error::KPM was explicitly requested but is not in final config."
+            exit 1
           fi
 
           echo "==> Final config scan"
@@ -1199,34 +1200,32 @@ jobs:
 
           MAKE_ARGS=(O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CC="ccache clang")
           echo "==> Building Image"
-          # ---- v111: report a driver version that matches the manager APK ----
-          # SukiSU's kernel/Kbuild computes the driver version from a LIVE
-          # api.github.com commit count on `main`:
-          #     KSU_VERSION := VERSION_BASE(40000) + LOCAL_COUNT - VERSION_OFFSET(2815)
-          # When that curl is used, the number climbs on every upstream push,
-          # regardless of which commit we actually build -- so the manager shows a
-          # PERMANENT "driver version mismatch", App Profile writes are rejected, and
-          # root effectively stops working. That is the failure this pins out.
-          #
-          # The number is set purely by the commit count passed as GITHUB_COMMITS on
-          # the make line; it is INDEPENDENT of the source commit we compile. So we
-          # can keep the compile-safe, SUSFS-2.2.0-paired driver (f2201c4) AND report
-          # the exact version the current manager APK expects.
-          #
-          # Current release: SukiSU_v4.2.0_40900_releases.apk -> version code 40900.
-          #     40900 = 40000 + LOCAL_COUNT - 2815  ->  LOCAL_COUNT = 3715
-          # So GITHUB_COMMITS=3715 makes the driver report 40900 == v4.2.0 manager.
-          # Verified ABI-compatible with f2201c4: KERNEL_SU_OPTION is still 0xDEADBEEF
-          # and the app_profile struct is byte-identical between f2201c4 and the
-          # v4.2.0 tag, so only the version number needed fixing.
-          #
-          # If you install a DIFFERENT manager APK, set SUKISU_VERSION_COMMITS so that
-          # 40000 + N - 2815 equals that APK's version code (shown in its filename),
-          # e.g. v4.1.3 (40796) -> N=3611.
-          SUKISU_VERSION_COMMITS="${SUKISU_VERSION_COMMITS:-3715}"
-          REPORTED_VER="$((40000 + SUKISU_VERSION_COMMITS - 2815))"
-          echo "==> Pinning SukiSU driver version to $REPORTED_VER (install the matching manager APK; 40900 = v4.2.0)."
-          MAKE_ARGS+=("GITHUB_COMMITS=$SUKISU_VERSION_COMMITS")
+          # Compute the driver's REAL version from the EXACT pinned builtin commit,
+          # not the older published 40900 manager code or a drifting GitHub API count.
+          SRC_TREE="$GITHUB_WORKSPACE/kernel_workspace/KernelSU"
+          actual_ref="$(git -C "$SRC_TREE" rev-parse HEAD)"
+          [ "$actual_ref" = "6c284e957feaa9a388a9f1c37dc4ec80d95e434b" ] || {
+            echo "::error::SukiSU source ref mismatch: $actual_ref"; exit 1;
+          }
+          [ "$(git -C "$SRC_TREE" rev-parse --is-shallow-repository)" = "false" ] || {
+            echo "::error::Shallow SukiSU history cannot determine genuine driver version"; exit 1;
+          }
+          commit_count="$(git -C "$SRC_TREE" rev-list --count HEAD)"
+          case "$commit_count" in ""|*[!0-9]*) echo "::error::Invalid commit count"; exit 1 ;; esac
+          driver_version="$((40000 + commit_count - 2815))"
+          if [ "$driver_version" -le 40900 ] || [ "$driver_version" -ge 50000 ]; then
+            echo "::error::Unexpected actual builtin version: $driver_version"; exit 1
+          fi
+          {
+            echo "source_ref=$actual_ref"
+            echo "commits=$commit_count"
+            echo "driver_version=$driver_version"
+            echo "released_manager=40900"
+            echo "manager_pairing=not_verified"
+          } | tee "$GITHUB_WORKSPACE/_ox_debug/real-sukisu-version.txt"
+          echo "SUKISU_REAL_VERSION=$driver_version" >> "$GITHUB_ENV"
+          echo "==> Actual pinned builtin revision version: $driver_version"
+          MAKE_ARGS+=("GITHUB_COMMITS=$commit_count")
 
           make -j"$(nproc --all)" "${MAKE_ARGS[@]}" Image 2>&1 | tee "$GITHUB_WORKSPACE/_ox_debug/build.log"
 
@@ -1490,6 +1489,13 @@ jobs:
               assert not any(x in sh for x in ("reboot -f","reboot system","svc power reboot"))
           src=a/"Image_OP13_SukiSUUltra_CCTV18_inline_stocklike_v111"
           assert hashlib.sha256(src.read_bytes()).digest()==hashlib.sha256(blob).digest()
+          version=Path("_ox_debug/real-sukisu-version.txt").read_text()
+          fields=dict(row.split("=",1) for row in version.splitlines() if "=" in row)
+          assert fields["source_ref"]=="6c284e957feaa9a388a9f1c37dc4ec80d95e434b", "SukiSU checkout drift"
+          assert 40900<int(fields["driver_version"])<50000, "Latest builtin driver version not used"
+          buildlog=Path("_ox_debug/build.log").read_text(errors="replace")
+          assert "version: "+fields["driver_version"] in buildlog, "KSU_VERSION does not match pinned source history"
+          print("SukiSU builtin version derived from pinned history:",fields["driver_version"])
           uts=Path("_ox_debug/uts.txt").read_text()
           assert "6.6.89-android15-8-gf4dc45704e54-abogki446052083-4k" in uts, "Wrong kernel UTS: "+uts
           print("PASS ZIP CRC/contents/Image SHA256/UTS/device guards/no auto reboot")
