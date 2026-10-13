@@ -1,4 +1,4 @@
-name: Start isolated OP13 PJZ110 6.6.89 build
+name: Start isolated OP13 PJZ110 6.6.89 latest SukiSU build
 # Rebuild after pinned task_mmu SUSFS rebase + strict whole-patch dry-run.
 on:
   push:
@@ -33,8 +33,8 @@ jobs:
           url=f"https://api.github.com/repos/{repo}/actions/workflows/op13-pjz110-a16-6689-sukisu.yml/dispatches"
           inputs={
              "profile":"minimal_safe",
-             "sukisu_ref":"f2201c472b607557ed8563e2d1b729af25f3111b",
-             "kpm_enable":"true",
+             "sukisu_ref":"6c284e957feaa9a388a9f1c37dc4ec80d95e434b",
+             "kpm_enable":"false",
              "multi_manager_support":"false",
              "SUSFS":"On",
              "susfs_ref":"40e6c19ec2ca88804d6c2e3ddf52623af6685463",
