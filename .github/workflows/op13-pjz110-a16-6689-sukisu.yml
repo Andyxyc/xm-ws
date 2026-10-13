@@ -628,9 +628,19 @@ jobs:
           fi
           echo "pairing: OK (susfs=$SUSFS_NEW driver=$DRV_NEW)" > "$GITHUB_WORKSPACE/_ox_debug/pairing.txt"
 
-          echo "==> Applying CCTV18 SUSFS patch with policy: ${{ inputs.susfs_patch_policy }}"
+          echo "==> Rebase pinned OP13 6.6.89 task_mmu.c SUSFS patch before the strict gate"
+          UPSTREAM_SUSFS_PATCH="50_add_susfs_in_gki-${ANDROID_VERSION}-${KERNEL_VERSION}.patch"
+          REBASED_SUSFS_PATCH="$GITHUB_WORKSPACE/_ox_debug/PJZ110_6689_SUSFS_rebased.patch"
+          python3 "$GITHUB_WORKSPACE/scripts/op13_susfs_patch_rebase.py" \
+            "$UPSTREAM_SUSFS_PATCH" fs/proc/task_mmu.c "$REBASED_SUSFS_PATCH" \
+            2>&1 | tee "$GITHUB_WORKSPACE/_ox_debug/op13-susfs-rebase.log"
+          # Validate the entire patch, not merely the previously rejected hunk.
+          patch --dry-run -p1 -N -F 3 < "$REBASED_SUSFS_PATCH" \
+            2>&1 | tee "$GITHUB_WORKSPACE/_ox_debug/op13-susfs-dryrun.log"
+
+          echo "==> Applying OP13-rebased CCTV18 SUSFS patch with policy: ${{ inputs.susfs_patch_policy }}"
           set +e
-          patch -p1 -N -F 3 < "50_add_susfs_in_gki-${ANDROID_VERSION}-${KERNEL_VERSION}.patch" 2>&1 | tee "$GITHUB_WORKSPACE/_ox_debug/cctv18-susfs-patch.log"
+          patch -p1 -N -F 3 < "$REBASED_SUSFS_PATCH" 2>&1 | tee "$GITHUB_WORKSPACE/_ox_debug/cctv18-susfs-patch.log"
           patch_rc=${PIPESTATUS[0]}
           set -e
 
