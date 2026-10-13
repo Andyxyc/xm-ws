@@ -1,0 +1,68 @@
+name: Start isolated OP13 PJZ110 6.6.89 build
+on:
+  push:
+    branches: [SukiSU-Ultra]
+    paths:
+      - .github/workflows/op13-pjz110-dispatch.yml
+  workflow_dispatch:
+permissions:
+  actions: write
+  contents: read
+concurrency:
+  group: op13-pjz110-6689-dispatch
+  cancel-in-progress: false
+jobs:
+  dispatch:
+    name: Dispatch PJZ110 16.0.3.502 A16 SukiSU candidate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Dispatch pinned version-locked build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPOSITORY: ${{ github.repository }}
+          GH_REFNAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, urllib.request, urllib.error
+          repo=os.environ["GH_REPOSITORY"]
+          assert repo=="Andyxyc/xm-ws", "Unexpected destination repository"
+          assert os.environ["GH_REFNAME"]=="SukiSU-Ultra", "Unexpected target branch"
+          url=f"https://api.github.com/repos/{repo}/actions/workflows/op13-pjz110-a16-6689-sukisu.yml/dispatches"
+          inputs={
+             "profile":"minimal_safe",
+             "sukisu_ref":"f2201c472b607557ed8563e2d1b729af25f3111b",
+             "kpm_enable":"true",
+             "multi_manager_support":"false",
+             "SUSFS":"On",
+             "susfs_ref":"40e6c19ec2ca88804d6c2e3ddf52623af6685463",
+             "susfs_patch_policy":"strict",
+             "hook_mode":"inline_susfs",
+             "kernel_suffix":"android15-8-gf4dc45704e54-abogki446052083-4k",
+             "optimise":"O2",
+             "lz4_zram_patch":"Off",
+             "bbg":"Off",
+             "bbr":"Off",
+             "adios":"Off",
+             "rekernel":"Off",
+             "proxy":"Off",
+             "fengchi":"Off",
+          }
+          payload=json.dumps({"ref":"SukiSU-Ultra","inputs":inputs}).encode()
+          req=urllib.request.Request(url,data=payload,method="POST",headers={
+            "Authorization":"Bearer "+os.environ["GH_TOKEN"],
+            "Accept":"application/vnd.github+json",
+            "Content-Type":"application/json",
+            "X-GitHub-Api-Version":"2022-11-28",
+            "User-Agent":"PJZ110-kernel-build"
+          })
+          try:
+            with urllib.request.urlopen(req,timeout=45) as response:
+              assert response.status==204, f"Unexpected GitHub response {response.status}"
+          except urllib.error.HTTPError as e:
+            print("GitHub workflow dispatch rejected:",e.code,e.read().decode()[:3000])
+            raise
+          print("BUILD DISPATCH ACCEPTED: OP13 PJZ110 16.0.3.502 / Android16 / 6.6.89")
+          print("CI firmware boot compatibility: NOT YET VERIFIED. Candidate only.")
+          PY
