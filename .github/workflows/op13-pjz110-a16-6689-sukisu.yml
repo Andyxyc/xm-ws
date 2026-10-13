@@ -17,6 +17,7 @@ env:
   CCTV18_ASSETS_REF: "21db9e7d547ca625bd5aa734fb5dfc8b94ea48ef"
   CCTV18_KERNEL_COMMIT: "1fa251814f74c86488de8c765ea24375dfbfc094"
   SUKISU_SETUP_REF: "6c284e957feaa9a388a9f1c37dc4ec80d95e434b"
+  SUKISU_MAIN_COUNT_REF: "95226411b36f6d3c2d224c090133ad79db65bfc8"
   AK3_REF: "020dfeccf9d7e962a48400fc94d3e451df92eead"
   CCACHE_MAXSIZE: 8G
 
@@ -30,7 +31,7 @@ on:
         options: [stock_daily, stock_plus, minimal_safe, debug_only]
         default: minimal_safe
       sukisu_ref:
-        description: "Pinned latest 2026-10-14 upstream builtin at 6c284e957feaa9a388a9f1c37dc4ec80d95e434b. Driver version is derived from this exact commit's git history and may differ from current released Manager 40900; manager compatibility remains to be tested."
+        description: "Pinned latest 2026-10-14 upstream builtin at 6c284e957feaa9a388a9f1c37dc4ec80d95e434b. Driver version uses the pinned upstream main history count as in Kbuild and may differ from current released Manager 40900; manager compatibility remains to be tested."
         required: true
         type: string
         default: "6c284e957feaa9a388a9f1c37dc4ec80d95e434b"
@@ -1210,7 +1211,13 @@ jobs:
           [ "$(git -C "$SRC_TREE" rev-parse --is-shallow-repository)" = "false" ] || {
             echo "::error::Shallow SukiSU history cannot determine genuine driver version"; exit 1;
           }
-          commit_count="$(git -C "$SRC_TREE" rev-list --count HEAD)"
+          # Match upstream Kbuild's version formula, based on main commit count.
+          # Pin main as well, instead of relying on today's unpinned API response.
+          main_ref="${SUKISU_MAIN_COUNT_REF}"
+          git -C "$SRC_TREE" cat-file -e "$main_ref^{commit}" || {
+            echo "::error::Pinned SukiSU main revision not fetched"; exit 1;
+          }
+          commit_count="$(git -C "$SRC_TREE" rev-list --count "$main_ref")"
           case "$commit_count" in ""|*[!0-9]*) echo "::error::Invalid commit count"; exit 1 ;; esac
           driver_version="$((40000 + commit_count - 2815))"
           if [ "$driver_version" -le 40900 ] || [ "$driver_version" -ge 50000 ]; then
@@ -1218,6 +1225,7 @@ jobs:
           fi
           {
             echo "source_ref=$actual_ref"
+            echo "main_ref=$main_ref"
             echo "commits=$commit_count"
             echo "driver_version=$driver_version"
             echo "released_manager=40900"
@@ -1492,6 +1500,7 @@ jobs:
           version=Path("_ox_debug/real-sukisu-version.txt").read_text()
           fields=dict(row.split("=",1) for row in version.splitlines() if "=" in row)
           assert fields["source_ref"]=="6c284e957feaa9a388a9f1c37dc4ec80d95e434b", "SukiSU checkout drift"
+          assert fields["main_ref"]=="95226411b36f6d3c2d224c090133ad79db65bfc8", "Driver revision count pin changed"
           assert 40900<int(fields["driver_version"])<50000, "Latest builtin driver version not used"
           buildlog=Path("_ox_debug/build.log").read_text(errors="replace")
           assert "version: "+fields["driver_version"] in buildlog, "KSU_VERSION does not match pinned source history"
