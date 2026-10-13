@@ -116,7 +116,7 @@ def prepare(patch: Path, original: Path, output: Path) -> None:
     src = src_bytes.decode("utf-8")
     assert "VMA_PAD_START(vma)" in src and "__fold_filemap_fixup_entry(" in src
     assert "if (vma->vm_end > last_vma_end) {" in src
-    assert src.count("last_vma_end = vma->vm_end;") == 2
+    assert src.count("last_vma_end = vma->vm_end;") == 3
     amended = rebase_text(patch_bytes.decode("utf-8"))
     with output.open("x", encoding="utf-8", newline="\n") as f:
         f.write(amended)
