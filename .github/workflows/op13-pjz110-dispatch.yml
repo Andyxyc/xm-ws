@@ -1,4 +1,5 @@
 name: Start isolated OP13 PJZ110 6.6.89 build
+# Rebuild after pinned task_mmu SUSFS rebase + strict whole-patch dry-run.
 on:
   push:
     branches: [SukiSU-Ultra]
