@@ -74,7 +74,7 @@ jobs:
           PY
           bash -n ace5pro-minimal-builder.sh
           sh -n templates/ace5pro_minimal_susfs_anykernel.sh
-          echo "Validated pinned SukiSU40979 + core SUSFS; native KPM and no vendor scheduler patch."
+          echo "Validated pinned SukiSU source + SUSFS + native KPM; vendor scheduler unchanged."
 
       - name: Compile source-matched 6.6.66 with only core SukiSU and SUSFS
         env:
@@ -153,9 +153,9 @@ jobs:
           from pathlib import Path
           p=Path('kernel_workspace/AnyKernel3/anykernel.sh')
           s=p.read_text()
-          s=s.replace('SukiSU Ultra 40979 + SUSFS minimal STABILITY TRIAL',
+          s=s.replace('SukiSU Ultra 40959 + SUSFS minimal STABILITY TRIAL',
                       'Pinned SukiSU + native KPM + SUSFS test')
-          s=s.replace('kernel.string=Ace5Pro 6.6.66 SukiSU40979 SUSFS ONLY - TEST',
+          s=s.replace('kernel.string=Ace5Pro 6.6.66 SukiSU40959 SUSFS ONLY - TEST',
                       'kernel.string=Ace5Pro PKR110 6.6.66 SukiSU SUSFS KPM - UNTESTED')
           start=s.index('ui_print "================================================"')
           end=s.index('ui_print "================================================"',start+1)+len('ui_print "================================================"')
@@ -173,7 +173,7 @@ jobs:
           suffix='6.6.66-android15-8-g29d86c5fc9dd-abogki428889875-4k'
           assert '  6.6.66-android15-8-*) ;;' in s
           s=s.replace('  6.6.66-android15-8-*) ;;',f'  {suffix}) ;;')
-          assert '40979' not in s
+          assert '40959' not in s
           p.write_text(s)
           PY
           sha256sum "$BASE/Image" | awk '{print $1 "  Image"}' > "$BASE/kernel-image.sha256"
