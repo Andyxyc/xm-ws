@@ -47,6 +47,15 @@ jobs:
           new='6c284e957feaa9a388a9f1c37dc4ec80d95e434b'
           assert s.count(old)>=3, 'Unexpected SukiSU setup source pin'
           s=s.replace(old,new)
+          # Remote SUSFS branch head drifted; fetch exact reviewed SUSFS commit.
+          pinned_susfs='0730de4f5d46ee2997f953101b0f608c0b400b38'
+          check='test "$(git -C susfs4ksu rev-parse HEAD)" = "'+pinned_susfs+'"'
+          if s.count(check)!=1:
+              raise SystemExit('SUSFS pin check location changed')
+          s=s.replace(check,
+              'git -C susfs4ksu fetch origin '+pinned_susfs+' --depth=1\n'
+              '  git -C susfs4ksu checkout --detach '+pinned_susfs+'\n'
+              '  '+check,1)
           lines=s.splitlines()
           out=[]; skip=False; removed=0
           for ln in lines:
