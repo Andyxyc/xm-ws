@@ -1,0 +1,51 @@
+name: Pad2Pro WiFi vendor ABI source integrity
+run-name: Pad2Pro WiFi no-fake-release gate ${{ github.run_id }}
+on:
+  push:
+    branches: [pad2pro-opd2409-wifi-abi-20261015]
+    paths:
+      - scripts/build_pad2pro_opd2409_crossflash.py
+      - scripts/pad2pro_sukisu40996_compat.py
+      - templates/anykernel_pad2pro_opd2409_crossflash_guarded.sh
+      - .github/workflows/pad2pro-wifi-source-integrity.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  source-integrity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Python syntax check
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/build_pad2pro_opd2409_crossflash.py
+          python3 -m py_compile scripts/pad2pro_sukisu40996_compat.py
+          dash -n templates/anykernel_pad2pro_opd2409_crossflash_guarded.sh
+      - name: Refuse fake live kernel suffix and unverified flash permissions
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('scripts/build_pad2pro_opd2409_crossflash.py').read_text()
+          assert "REPORTED_RELEASE = '6.6.57-android15-8-g443be96c6b96d-4k'" in s
+          assert "RELEASE[len(" not in s
+          assert "run(sc+['--set-str','LOCALVERSION'" not in s
+          assert "'-s','kernelrelease'" in s
+          assert "check_image(image, compiled_release)" in s
+          assert "'opd2409_live_vendor_abi':'UNVERIFIED'" in s
+          assert "'flash_permission':'BLOCKED'" in s
+          ak3=Path('templates/anykernel_pad2pro_opd2409_crossflash_guarded.sh').read_text()
+          assert 'abort "跨刷设备的原厂启动镜像和厂商 ABI 未核实' in ak3
+          print('PASS: no version-string impersonation; no unverified vendor-flash gate bypass')
+          PY
+      - name: Run pinned SukiSU and SUSFS regression tests
+        run: |
+          set -euo pipefail
+          python3 scripts/build_pad2pro_opd2409_crossflash.py selftest
+      - name: Report
+        run: |
+          echo 'Verified: Python shell syntax, no fake uname release, SukiSU/SUSFS static tests.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Not verified: live OPD2409 WiFi/Bluetooth, actual vendor module ABI, boot/init_boot or device startup.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'No flashable AK3 is produced by this job.' >> "$GITHUB_STEP_SUMMARY"
