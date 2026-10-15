@@ -117,6 +117,9 @@ def prepare():
     require(n == 1, 'SukiSU Makefile version interface changed')
     makefile.write_text(s)
     save('sukisu-version.json', {'version':version,'main_commit_count':count,'version_formula':'40000 + main_count - 2815','builtin_sha':PINS['KernelSU'][1],'manager_sha':MAIN_PIN})
+    # Fix the verified pinned builtin ABI mismatch without disabling dynamic manager or KPM.
+    # Do this before the UAPI5 backport; unknown code layouts fail the build.
+    run([sys.executable, ROOT/'scripts/pad2pro_sukisu40996_compat.py', 'apply', ksu])
     run(['bash',ROOT/'scripts/ace5pro_fix_uapi5.sh',ksu])
     # Reproduce upstream setup integration, without stash/pull or fallback checkout.
     (common/'drivers/kernelsu').symlink_to(Path('../../KernelSU/kernel'))
@@ -213,6 +216,7 @@ def selftest():
         p.write_text('\n'.join(f'0x00000001 sym{i} vmlinux EXPORT_SYMBOL' for i in range(101)))
         require(len(symvers(p))==101,'Symbol version parser regression')
     run([sys.executable, ROOT/'scripts/test_pad2pro_susfs_rebase.py'])
+    run([sys.executable, ROOT/'scripts/pad2pro_sukisu40996_compat.py', 'selftest'])
     print('PASS: local unit tests; no kernel build or device flashing in selftest')
 
 if __name__ == '__main__':
