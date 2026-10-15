@@ -66,7 +66,7 @@ def apply(tree: Path) -> None:
             raise ValueError(f"Pinned source fingerprint drift: {rel}: {actual}")
     paths = list(EXPECTED_BLOBS)
     header, throne, observer = transform(
-        *(tree / p).read_text(encoding="utf-8") for p in paths[:3]
+        *((tree / p).read_text(encoding="utf-8") for p in paths[:3])
     )
     dispatch = (tree / paths[3]).read_text(encoding="utf-8")
     for name in ("struct ksu_manager_cmd *cmd;", ".cmd = KSU_IOCTL_MANAGER,",
