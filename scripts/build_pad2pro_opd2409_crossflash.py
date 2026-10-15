@@ -22,7 +22,8 @@ PINS = {
 MAIN_PIN = '1324dd358468801868339d3b963b639b64947c1d'
 # Release string from user-supplied screenshot, NOT the version or ABI of pinned common source.
 # Matching vermagic text alone never proves cross-ROM vendor ABI compatibility.
-RELEASE = '6.6.57-android15-8-g443be96c6b96d-4k'
+REPORTED_RELEASE = '6.6.57-android15-8-g443be96c6b96d-4k'
+SOURCE_BASE = '6.6.57'
 ROOT = Path(os.environ.get('GITHUB_WORKSPACE', Path.cwd())).resolve()
 WORK = ROOT / 'pad2pro_work'
 DIAG = ROOT / 'pad2pro_diagnostics'
@@ -81,11 +82,13 @@ def symvers(path):
     require(len(out) > 100, 'Missing or truncated vmlinux symbol versions')
     return out
 
-def check_image(path):
+def check_image(path, compiled_release=None):
     b = Path(path).read_bytes()
     require(len(b) > 6_000_000 and b[56:60] == b'ARM\x64', 'Invalid ARM64 Image header')
     banners = re.findall(rb'Linux version ([^\x00\n]+)', b)
-    require(any(x.startswith((RELEASE+' ').encode()) for x in banners), 'Actual compiled kernel release mismatch')
+    target = compiled_release or SOURCE_BASE
+    require(any(x.startswith((target+' ').encode()) for x in banners),
+            'Actual compiled Image Linux version disagrees with build source: '+target)
     return sha(path)
 
 def patch_file(tree, patch):
@@ -99,7 +102,7 @@ def prepare():
     save('sources.json', {'pins': PINS, 'manager_main_pin': MAIN_PIN,
          'target': 'OPD2409_15.0.1.501(CN01) (crossflashed on OPD2413 hardware)',
          'source_rom': 'OPD2413_15.0.1.701(CN01) ONLY; not a firmware-matched OPPO source',
-         'release': RELEASE, 'real_device_test': 'not_performed', 'oppo_firmware_501_vendor_abi': 'not_performed',
+         'reported_running_release': REPORTED_RELEASE, 'real_device_test': 'not_performed', 'oppo_firmware_501_vendor_abi': 'not_performed',
          'running_release_taken_from': 'user_photo_not_boot_img',
          'requires_actual_boot_and_vendor_dlkm_for_flash': True})
     common = clone('common')
@@ -157,10 +160,18 @@ def build(kind):
     args = ['make','ARCH=arm64','LLVM=1','LLVM_IAS=1','O=out','LOCALVERSION=']
     run(args+['gki_defconfig'],tree,env=env)
     sc = ['scripts/config','--file','out/.config']
-    run(sc+['--set-str','LOCALVERSION',RELEASE[len('6.6.57'):],'-d','LOCALVERSION_AUTO'],tree)
+    # Do NOT forge the screenshot's kernel suffix onto a different source tree.
+    # Firmware-specific KMI/driver compatibility must be demonstrated by real vendor modules.
+    run(sc+['-d','LOCALVERSION_AUTO'],tree)
     if kind != 'stock':
         run(sc+['-e','KSU','-e','KPM','-e','KSU_SUSFS'],tree)
     run(args+['olddefconfig'],tree,env=env)
+    compiled_release = run(args+['-s','kernelrelease'],tree,capture=True,env=env,timeout=180).splitlines()[-1]
+    require(compiled_release.startswith(SOURCE_BASE), 'Unexpected compiled kernel release: '+compiled_release)
+    save(kind+'-release.json',{'actual_compiled_kernelrelease':compiled_release,
+         'device_screenshot_release':REPORTED_RELEASE,
+         'matches_reported_release':compiled_release==REPORTED_RELEASE,
+         'wifi_vendor_module_abi_verified':False})
     cfg = config(tree/'out/.config')
     for key in ['CONFIG_CFI_CLANG','CONFIG_MODVERSIONS','CONFIG_MODULE_SIG','CONFIG_MODULE_SIG_PROTECT']:
         require(cfg.get(key)=='y', f'Original safety/ABI option lost: {key}')
@@ -173,7 +184,7 @@ def build(kind):
     shutil.copy2(tree/'out/.config', DIAG/(kind+'.config'))
     run(args+[f'-j{os.cpu_count() or 2}','all'],tree,env=env,timeout=5400)
     image = tree/'out/arch/arm64/boot/Image'
-    digest = check_image(image)
+    digest = check_image(image, compiled_release)
     symbols = tree/'out/Module.symvers'
     require(symbols.is_file(),'No complete Module.symvers produced')
     shutil.copy2(symbols,DIAG/(kind+'.symvers'))
@@ -197,10 +208,11 @@ def build(kind):
         tool.chmod(0o755)
         run([tool],staging,timeout=180)
         result = staging/'oImage'
-        kpmhash = check_image(result)
+        kpmhash = check_image(result, compiled_release)
         require(kpmhash != digest,'KPM patch produced unchanged image')
         shutil.copy2(result, WORK/'ak3/Image')
         save('custom-build.json',{'pre_kpm_sha256':digest,'image_sha256':kpmhash,'kpm':'patched',
+            'compiled_kernelrelease':compiled_release,'device_reported_kernelrelease':REPORTED_RELEASE,
             'abi_gate':'passed_source_only','opd2409_live_vendor_abi':'UNVERIFIED',
             'real_device_test':'not_performed','flash_permission':'BLOCKED'})
 
