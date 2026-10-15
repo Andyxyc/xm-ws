@@ -111,6 +111,22 @@ def prepare():
     makefile.write_text(s)
     save('sukisu-version.json', {'version':version,'main_commit_count':count,'version_formula':'40000 + main_count - 2815','builtin_sha':PINS['KernelSU'][1],'manager_sha':MAIN_PIN})
     run(['bash',ROOT/'scripts/ace5pro_fix_uapi5.sh',ksu])
+    # Reconcile pinned builtin KPM UAPI with the complete driver interfaces.
+    # Refuse unknown source layouts instead of suppressing compiler errors.
+    header = ksu/'kernel/include/uapi/supercall.h'
+    h = header.read_text()
+    old = "DECLARE(__u32, KSU_IOCTL_KPM, _IOWR('K', 106, ksu_manager_cmd));"
+    require(h.count(old)==1, 'Unexpected legacy KPM ioctl declaration')
+    h = h.replace(old, '', 1)
+    header.write_text(h)
+    throne = ksu/'kernel/manager/throne_tracker.c'
+    t = throne.read_text()
+    require('strncmp(np->package, pkg, KSU_MAX_PACKAGE_NAME)' in t,
+            'Unexpected throne tracker source')
+    # The current builtin branch contains an unbound pkg reference.
+    # A semantic fix requires checking the complete function before rebuilding.
+    require(False, 'KPM UAPI collision fixed; throne tracker and observer require source-level review before safe build')
+
     # Reproduce upstream setup integration, without stash/pull or fallback checkout.
     (common/'drivers/kernelsu').symlink_to(Path('../../KernelSU/kernel'))
     with (common/'drivers/Makefile').open('a') as f: f.write('\nobj-$(CONFIG_KSU) += kernelsu/\n')
