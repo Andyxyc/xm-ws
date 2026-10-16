@@ -5,6 +5,7 @@ on:
     branches: [ace6-plq110-coloros16-sukisu-20261016]
     paths:
       - .github/workflows/ace6-plq110-16010500-source-preflight.yml
+      - scripts/ace6_susfs_rebase.py
   workflow_dispatch:
 permissions:
   contents: read
@@ -67,7 +68,7 @@ jobs:
           grep -qx 'CLANG_VERSION=r510928' ace6-common/build.config.constants
           test -s ace6-common/arch/arm64/configs/gki_defconfig
           echo 'OFFICIAL_SOURCE_CANDIDATE=PLQ110_16.0.9.401_not_16.0.10.500' >> ace6-evidence/refs.txt
-      - name: Probe exact SUSFS 2.3.0 kernel patch against official Ace6 code
+      - name: Strictly rebase and verify SUSFS 2.3.0 two known Ace6 OEM hunks
         run: |
           set -euo pipefail
           git clone --quiet --depth=1 --single-branch --branch oki-android15-6.6 \
@@ -75,12 +76,17 @@ jobs:
           test "$(git -C susfs-66 rev-parse HEAD)" = 3f6aae536724af0df3dfa15f932034d14a5dbc5c
           grep -qx 'version=v2.3.0' susfs-66/ksu_module_susfs/module.prop
           test -s susfs-66/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch
+          python3 -m py_compile scripts/ace6_susfs_rebase.py
+          python3 scripts/ace6_susfs_rebase.py selftest
+          python3 scripts/ace6_susfs_rebase.py apply \
+            susfs-66/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch \
+            ace6-common ace6-evidence/ace6-rebased-susfs.patch
           if ! (cd ace6-common && patch -p1 --batch --forward --fuzz=0 --dry-run \
-             < ../susfs-66/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch) \
+             < ../ace6-evidence/ace6-rebased-susfs.patch) \
              > ace6-evidence/susfs-dry-run.log 2>&1; then
             tail -n 100 ace6-evidence/susfs-dry-run.log
             echo 'SUSFS_STRICT_PATCH=FAILED' >> ace6-evidence/refs.txt
-            echo "::error::SUSFS 2.3.0 patch is not strictly applicable; a reviewed rebase is required."
+            echo "::error::Pinned Ace6-rebased SUSFS 2.3.0 patch still fails strict application."
             exit 31
           fi
           echo 'SUSFS_STRICT_PATCH=PASS' >> ace6-evidence/refs.txt
