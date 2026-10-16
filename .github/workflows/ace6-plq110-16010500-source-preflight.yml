@@ -81,15 +81,18 @@ jobs:
           python3 scripts/ace6_susfs_rebase.py apply \
             susfs-66/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch \
             ace6-common ace6-evidence/ace6-rebased-susfs.patch
-          if ! (cd ace6-common && patch -p1 --batch --forward --fuzz=0 --dry-run \
-             < ../ace6-evidence/ace6-rebased-susfs.patch) \
+          # git apply checks the exact context; unlike GNU patch it never uses
+          # fuzz to discard nearby context. This also avoids patch's
+          # misleading fuzz=1 demand for the OEM include-location offset.
+          if ! git -C ace6-common apply --check --whitespace=error \
+             ../ace6-evidence/ace6-rebased-susfs.patch \
              > ace6-evidence/susfs-dry-run.log 2>&1; then
             tail -n 100 ace6-evidence/susfs-dry-run.log
             echo 'SUSFS_STRICT_PATCH=FAILED' >> ace6-evidence/refs.txt
             echo "::error::Pinned Ace6-rebased SUSFS 2.3.0 patch still fails strict application."
             exit 31
           fi
-          echo 'SUSFS_STRICT_PATCH=PASS' >> ace6-evidence/refs.txt
+          echo 'SUSFS_STRICT_GIT_APPLY=PASS' >> ace6-evidence/refs.txt
       - name: Verify official SukiSU KPM kernel sources and manager protocol
         run: |
           set -euo pipefail
