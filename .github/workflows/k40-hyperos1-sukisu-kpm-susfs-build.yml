@@ -8,6 +8,7 @@ on:
       - .github/workflows/k40-hyperos1-sukisu-kpm-susfs-build.yml
       - scripts/k40-hyperos1-prepare.sh
       - scripts/k40-hyperos1-ksu419-compat.py
+      - scripts/k40-hyperos1-susfs-syscall-abi.py
       - templates/k40-hyperos1-sukisu-kpm-susfs-anykernel.sh
 permissions:
   contents: read
@@ -36,8 +37,9 @@ jobs:
           test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/38893155778" --jq .conclusion)" = success
           bash -n scripts/k40-hyperos1-prepare.sh
           sh -n templates/k40-hyperos1-sukisu-kpm-susfs-anykernel.sh
-          python3 -m py_compile scripts/k40-hyperos1-ksu419-compat.py scripts/pad2pro_sukisu40996_compat.py
+          python3 -m py_compile scripts/k40-hyperos1-ksu419-compat.py scripts/pad2pro_sukisu40996_compat.py scripts/k40-hyperos1-susfs-syscall-abi.py
           python3 scripts/k40-hyperos1-ksu419-compat.py selftest
+          python3 scripts/k40-hyperos1-susfs-syscall-abi.py selftest
           python3 scripts/pad2pro_sukisu40996_compat.py selftest
       - name: Install build toolchain
         run: |
@@ -126,6 +128,7 @@ jobs:
           grep -qxF 'CONFIG_KSU_SUSFS=y' out/.config
           grep -qxF 'CONFIG_KPM=y' out/.config
           echo 'SOURCE_ONLY=BOOT_AND_WIFI_UNTESTED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'SUSFS_MANUAL_SYSCALL_ABI=ALIOTH_USER_POINTER_VERIFIED' >> "$GITHUB_STEP_SUMMARY"
       - name: Package standard boot-only AnyKernel3 ZIP without auto reboot
         run: |
           set -euo pipefail
