@@ -20,6 +20,9 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 180
+    env:
+      # One device: permit upstream's direct-download toolchain fallback on mirror miss.
+      OP_TOTAL_DEVICES: '1'
     steps:
       - name: Checkout reviewed OnePlus build pipeline
         uses: actions/checkout@v4
