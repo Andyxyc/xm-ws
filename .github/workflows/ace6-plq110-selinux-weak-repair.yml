@@ -1,0 +1,264 @@
+name: OnePlus Ace6 PLQ110 SukiSU KPM SUSFS SELinux symbol-compatible source build
+run-name: Ace6-PLQ110-SukiSU40996-SELinux-compat-${{ github.run_id }}
+on:
+  workflow_dispatch:
+  push:
+    branches: [ace6-plq110-selinux-weak-fix-20261016]
+    paths:
+      - .github/workflows/ace6-plq110-selinux-weak-repair.yml
+      - scripts/ace6_sukisu_selinux_weak_compat.py
+      - scripts/ace6_susfs_rebase.py
+      - scripts/ace6_susfs_sukisu_hook_compat.py
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: ace6-plq110-66118-sukisu-selinux-compat
+  cancel-in-progress: false
+jobs:
+  compile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 200
+    env:
+      GITHUB_COMMITS: ""
+      KERNEL_REF: 65b954a773b183a9999b06bb1b2f921f12eaaf11
+      KSU_REF: c95d6e2c76adb11b0e438e518e32ac4e31f5b1d0
+      KSU_MAIN_REF: 2aed04fcfdff9ad53041ffd84a291573993fa538
+      SUSFS_REF: 3f6aae536724af0df3dfa15f932034d14a5dbc5c
+    steps:
+      - name: Checkout isolated Ace6 source integration
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Preflight review and no boot writes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(gh api repos/$GITHUB_REPOSITORY/actions/runs/38910795279 --jq .conclusion)" = success || {
+            echo "::error::Pinned Ace6 strict SUSFS source check not green"; exit 30;
+          }
+          python3 -m py_compile scripts/ace6_susfs_rebase.py scripts/ace6_susfs_sukisu_hook_compat.py scripts/pad2pro_sukisu40996_compat.py scripts/ace6_sukisu_selinux_weak_compat.py
+          python3 scripts/ace6_susfs_rebase.py selftest
+          python3 scripts/ace6_susfs_sukisu_hook_compat.py selftest
+          python3 scripts/pad2pro_sukisu40996_compat.py selftest
+          python3 scripts/ace6_sukisu_selinux_weak_compat.py selftest
+          bash -n scripts/ace5pro_fix_uapi5.sh
+          bash -n scripts/ace5pro_sukisu_minimal_compat.sh
+          mkdir -p ace6-diagnostics src artifacts
+          cat > ace6-diagnostics/firmware.txt <<'EOF'
+          DEVICE=OnePlus_Ace_6_PLQ110_ktm
+          USER_ROM=PLQ110_16.0.10.500(CN01B110P02)
+          USER_KERNEL=6.6.118-android15-8-g93e223c276e7-abogki500782043-4k
+          AVAILABLE_OFFICIAL_KERNEL_SOURCE_ROM=PLQ110_16.0.9.401(CN01)
+          EXACT_USER_ROM_VENDOR_MODULE_ABI=NOT_VERIFIED
+          EXACT_USER_BOOT_IMAGE=NOT_OBTAINED
+          BOOT_WIFI_BLUETOOTH_RUNTIME_TEST=NOT_PERFORMED
+          FLASH_SAFE=NO
+          AUTHOR=闲心中都是莫
+          EOF
+      - name: Install kernel build tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            make gcc g++ git curl aria2 unzip zip bison flex bc \
+            python3 python3-venv ccache rsync cpio zstd \
+            libssl-dev libelf-dev dwarves kmod libncurses-dev lz4 file xz-utils
+          ccache --version
+          df -h .
+      - name: Fetch immutable 6.6.118 Ace6 OnePlusOSS kernel common
+        run: |
+          set -euo pipefail
+          git -c http.version=HTTP/1.1 clone --quiet --depth=1 --single-branch --filter=blob:none \
+            --branch oneplus/sm8750_b_16.0.0_ace_6 \
+            https://github.com/OnePlusOSS/android_kernel_common_oneplus_sm8750.git src/common
+          test "$(git -C src/common rev-parse HEAD)" = "$KERNEL_REF"
+          for part in 'VERSION = 6' 'PATCHLEVEL = 6' 'SUBLEVEL = 118'; do
+            grep -qxF "$part" src/common/Makefile || exit 40
+          done
+          grep -qxF 'CLANG_VERSION=r510928' src/common/build.config.constants
+          test -s src/common/arch/arm64/configs/gki_defconfig
+          echo "$KERNEL_REF" > ace6-diagnostics/common-ref.txt
+      - name: Retrieve SHA256-pinned Clang18 and build-tools
+        run: |
+          set -euo pipefail
+          mkdir -p src/clang18 src/build-tools
+          BASE=https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang18-r510928
+          aria2c -q -x12 -s12 -k1M --max-tries=4 --retry-wait=6 "$BASE/clang-r510928.zip" -d src -o clang.zip
+          echo '1221635c13d02c5f0c8abb93f38f5d43f5e2f86906ae2e18894ce63e90264164  src/clang.zip' | sha256sum -c -
+          aria2c -q -x12 -s12 -k1M --max-tries=4 --retry-wait=6 "$BASE/build-tools.zip" -d src -o build-tools.zip
+          echo '9a1a48cdbaababdfbbec9bee06198c60eb12369188b0f24428fb790c488d00ec  src/build-tools.zip' | sha256sum -c -
+          unzip -q src/clang.zip -d src/clang18
+          unzip -q src/build-tools.zip -d src
+          rm src/clang.zip src/build-tools.zip
+          test -x src/clang18/bin/clang
+          test -x src/clang18/bin/ld.lld
+          src/clang18/bin/clang --version | head -n1
+          src/clang18/bin/ld.lld --version
+          echo "$GITHUB_WORKSPACE/src/clang18/bin" >> "$GITHUB_PATH"
+          echo "$GITHUB_WORKSPACE/src/build-tools/path/linux-x86" >> "$GITHUB_PATH"
+      - name: Install source-verified official SukiSU 40996 builtin
+        run: |
+          set -euo pipefail
+          export PATH="$GITHUB_WORKSPACE/src/clang18/bin:$GITHUB_WORKSPACE/src/build-tools/path/linux-x86:$PATH"
+          mkdir -p src/KernelSU
+          git -C src/KernelSU init -q
+          git -C src/KernelSU remote add origin https://github.com/SukiSU-Ultra/SukiSU-Ultra.git
+          git -C src/KernelSU fetch -q --no-tags origin "$KSU_REF"
+          git -C src/KernelSU checkout -q --detach FETCH_HEAD
+          test "$(git -C src/KernelSU rev-parse HEAD)" = "$KSU_REF"
+          # Count the pinned upstream MAIN history; do not forge KSU_VERSION.
+          git -C src/KernelSU fetch -q --no-tags origin "$KSU_MAIN_REF"
+          COUNT="$(git -C src/KernelSU rev-list --count "$KSU_MAIN_REF")"
+          case "$COUNT" in ''|*[!0-9]*) echo "::error::Invalid official SukiSU revision count"; exit 41;; esac
+          DRIVER_VERSION="$((40000 + COUNT - 2815))"
+          test "$DRIVER_VERSION" -ge 40990 && test "$DRIVER_VERSION" -le 42000 || {
+            echo "::error::Unexpected real SukiSU driver version $DRIVER_VERSION"; exit 42;
+          }
+          printf 'builtin_commit=%s\nmain_commit=%s\nmain_count=%s\nreal_driver_version=%s\n' \
+            "$KSU_REF" "$KSU_MAIN_REF" "$COUNT" "$DRIVER_VERSION" \
+            | tee ace6-diagnostics/sukisu-version.txt
+          echo "GITHUB_COMMITS=$COUNT" >> "$GITHUB_ENV"
+          python3 scripts/pad2pro_sukisu40996_compat.py apply src/KernelSU
+          bash scripts/ace5pro_sukisu_minimal_compat.sh src/KernelSU
+          bash scripts/ace5pro_fix_uapi5.sh src/KernelSU
+          python3 scripts/ace6_sukisu_selinux_weak_compat.py apply src/KernelSU
+          echo 'SukiSU_OPTIONAL_SELINUX_HELPERS=WEAK_SYMBOLS_WITH_INTERNAL_FALLBACK' >> ace6-diagnostics/sukisu-version.txt
+          # Link without executing a network-sourced setup.sh.
+          ln -s ../../KernelSU/kernel src/common/drivers/kernelsu
+          printf '\nobj-$(CONFIG_KSU) += kernelsu/\n' >> src/common/drivers/Makefile
+          printf '\nsource "drivers/kernelsu/Kconfig"\n' >> src/common/drivers/Kconfig
+          test -L src/common/drivers/kernelsu
+          test -s src/common/drivers/kernelsu/Kconfig
+          grep -qF 'KERNEL_SU_UAPI_VERSION, 5' src/KernelSU/kernel/include/uapi/supercall.h
+      - name: Integrate strictly rebased SUSFS 2.3.0 on Ace6
+        run: |
+          set -euo pipefail
+          git clone --quiet --depth=1 --single-branch --branch oki-android15-6.6 \
+            https://github.com/cctv18/susfs4oki.git src/susfs4oki
+          test "$(git -C src/susfs4oki rev-parse HEAD)" = "$SUSFS_REF"
+          grep -qxF 'version=v2.3.0' src/susfs4oki/ksu_module_susfs/module.prop
+          SUSFS=src/susfs4oki/kernel_patches
+          python3 scripts/ace6_susfs_rebase.py apply \
+            "$SUSFS/50_add_susfs_in_gki-android15-6.6.patch" \
+            src/common ace6-diagnostics/susfs-ace6-rebased.patch
+          python3 scripts/ace6_susfs_sukisu_hook_compat.py apply \
+            ace6-diagnostics/susfs-ace6-rebased.patch \
+            ace6-diagnostics/susfs-sukisu-abi-matched.patch
+          git -C src/common apply --check --whitespace=nowarn \
+            ../../ace6-diagnostics/susfs-sukisu-abi-matched.patch
+          git -C src/common apply --whitespace=nowarn \
+            ../../ace6-diagnostics/susfs-sukisu-abi-matched.patch
+          for file in "$SUSFS/fs/susfs.c" "$SUSFS/include/linux/susfs.h" "$SUSFS/include/linux/susfs_def.h"; do
+            test -s "$file" || exit 43
+          done
+          cp "$SUSFS/fs/susfs.c" src/common/fs/
+          cp "$SUSFS/include/linux/susfs.h" "$SUSFS/include/linux/susfs_def.h" src/common/include/linux/
+          grep -q 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' src/common/fs/Makefile
+          test ! -e src/common/fs/proc/task_mmu.c.rej
+          sha256sum ace6-diagnostics/susfs-sukisu-abi-matched.patch \
+            > ace6-diagnostics/susfs-sukisu-patch.sha256
+      - name: Require actual KPM SUSFS root config and unchanged stock scheduling
+        run: |
+          set -euo pipefail
+          export PATH="$GITHUB_WORKSPACE/src/clang18/bin:$GITHUB_WORKSPACE/src/build-tools/path/linux-x86:$PATH"
+          cd src/common
+          cfg=arch/arm64/configs/gki_defconfig
+          test -s "$cfg"
+          cp "$cfg" "$GITHUB_WORKSPACE/ace6-diagnostics/original-gki_defconfig"
+          scripts/config --file "$cfg" \
+            -e KSU -e KPM -e KALLSYMS -e KALLSYMS_ALL \
+            -e KSU_SUSFS -e KSU_SUSFS_SUS_PATH \
+            -e KSU_SUSFS_SUS_MOUNT -e KSU_SUSFS_SUS_KSTAT \
+            -d KSU_FEATURE_ADBROOT -d KSU_DEBUG \
+            -d KSU_SUSFS_SUS_MAP -d KSU_SUSFS_OPEN_REDIRECT \
+            -d KSU_SUSFS_SPOOF_UNAME -d KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
+            -d KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS -d KSU_SUSFS_ENABLE_LOG
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 GITHUB_COMMITS="$GITHUB_COMMITS" gki_defconfig
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 GITHUB_COMMITS="$GITHUB_COMMITS" olddefconfig
+          cp out/.config "$GITHUB_WORKSPACE/ace6-diagnostics/final-config.txt"
+          for setting in \
+            CONFIG_KSU=y CONFIG_KPM=y \
+            CONFIG_KSU_SUSFS=y CONFIG_KSU_SUSFS_SUS_PATH=y \
+            CONFIG_KSU_SUSFS_SUS_MOUNT=y CONFIG_KSU_SUSFS_SUS_KSTAT=y \
+            CONFIG_KALLSYMS=y CONFIG_KALLSYMS_ALL=y; do
+            grep -qxF "$setting" out/.config || {
+              echo "::error::Requested feature unavailable after olddefconfig: $setting"; exit 51;
+            }
+          done
+          for setting in CONFIG_KSU_SUSFS_SUS_MAP=y CONFIG_KSU_SUSFS_OPEN_REDIRECT=y; do
+            if grep -qxF "$setting" out/.config; then
+              echo "::error::Unrequested optional SUSFS feature enabled: $setting"; exit 52
+            fi
+          done
+          grep -q '^CONFIG_ARCH_QCOM=y' out/.config || {
+            echo "::error::Official SM8750 ARM64 Qualcomm config not active"; exit 53;
+          }
+          echo "KPM_ENABLED=true" >> "$GITHUB_STEP_SUMMARY"
+          echo "SUSFS_ENABLED=true" >> "$GITHUB_STEP_SUMMARY"
+      - name: Compile real Android15 GKI Linux 6.6.118 arm64 Image
+        run: |
+          set -euo pipefail
+          export PATH="$GITHUB_WORKSPACE/src/clang18/bin:$GITHUB_WORKSPACE/src/build-tools/path/linux-x86:$PATH"
+          cd src/common
+          make -j4 O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 \
+            GITHUB_COMMITS="$GITHUB_COMMITS" Image vmlinux \
+            2>&1 | tee "$GITHUB_WORKSPACE/ace6-diagnostics/compile.log"
+          test -s out/arch/arm64/boot/Image
+          test -s out/vmlinux
+          test -s out/Module.symvers
+          cp out/Module.symvers "$GITHUB_WORKSPACE/ace6-diagnostics/Module.symvers"
+          cp out/include/generated/utsrelease.h "$GITHUB_WORKSPACE/ace6-diagnostics/utsrelease.h"
+          cp out/arch/arm64/boot/Image "$GITHUB_WORKSPACE/artifacts/Ace6-PLQ110-Image-6.6.118-SukiSU-KPM-SUSFS-UNTESTED"
+          sha256sum "$GITHUB_WORKSPACE/artifacts/Ace6-PLQ110-Image-6.6.118-SukiSU-KPM-SUSFS-UNTESTED" \
+            > "$GITHUB_WORKSPACE/artifacts/Ace6-PLQ110-Image-6.6.118-SukiSU-KPM-SUSFS-UNTESTED.sha256"
+      - name: Verify compiled Image, real Root KPM SUSFS and version
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          base=Path('artifacts/Ace6-PLQ110-Image-6.6.118-SukiSU-KPM-SUSFS-UNTESTED')
+          raw=base.read_bytes()
+          assert len(raw)>7000000, "Kernel Image is suspiciously small"
+          assert raw[56:60]==b'ARM\x64', "Invalid AArch64 Image magic"
+          assert b'Linux version 6.6.118' in raw, "Built Image is not 6.6.118"
+          config=Path('ace6-diagnostics/final-config.txt').read_text()
+          for symbol in ('KSU','KPM','KSU_SUSFS','KALLSYMS','KALLSYMS_ALL'):
+            assert re.search(rf'^CONFIG_{symbol}=y$',config,re.M),f'{symbol} absent'
+          assert b'Linux version 6.6.118-android15-8-g93e223c276e7-abogki500782043-4k' not in raw or (
+            b'Linux version 6.6.118-android15-8-g93e223c276e7-abogki500782043-4k' in raw and False
+          ), "Refuse copied live firmware version string without exact .500 source"
+          print("Verified real ARM64 Image and compiled Linux6.6.118 / KPM / SUSFS config")
+          print("NOT TESTED: actual PLQ110 16.0.10.500 wireless drivers and boot")
+          PY
+          cd src/common
+          nm out/vmlinux > "$GITHUB_WORKSPACE/ace6-diagnostics/vmlinux-symbols.txt"
+          for word in ksu_handle_execveat ksu_handle_faccessat; do
+            grep -Eq " [Tt] $word$" "$GITHUB_WORKSPACE/ace6-diagnostics/vmlinux-symbols.txt" || {
+              echo "::error::Root hook did not link: $word"; exit 61;
+            }
+          done
+          test -s out/fs/susfs.o || {
+            echo "::error::SUSFS object did not compile"; exit 62;
+          }
+          echo 'KERNEL_BUILD=COMPLETED_SOURCE_ONLY' >> "$GITHUB_STEP_SUMMARY"
+          echo 'FIRMWARE_16_0_10_500_WIFI_ABI=NOT_TESTED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'NO_FLASHABLE_AK3_UNTIL_REAL_VENDOR_ABI_VERIFIED' >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload build candidate Image and source diagnostics
+        uses: actions/upload-artifact@v4
+        with:
+          name: Ace6-PLQ110-6.6.118-SukiSU-KPM-SUSFS-SELinuxCompatible-SOURCE-CANDIDATE-${{ github.run_id }}
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+      - name: Save all diagnostics on success or failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Ace6-PLQ110-6.6.118-SELinuxCompatible-build-diagnostics-${{ github.run_id }}
+          path: ace6-diagnostics/
+          if-no-files-found: warn
+          retention-days: 30
