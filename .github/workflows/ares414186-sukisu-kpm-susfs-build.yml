@@ -1,0 +1,199 @@
+name: Redmi K40 Gaming ares 4.14.186 SukiSU KPM SUSFS candidate
+run-name: K40Gaming-ares-4.14.186-SukiSU40996-KPM-SUSFS-${{ github.run_id }}
+on:
+  workflow_dispatch:
+  push:
+    branches: [k40-gaming-ares-stock414186-sukisu-20261016]
+    paths:
+      - .github/workflows/ares414186-sukisu-kpm-susfs-build.yml
+      - scripts/ares414186-sukisu-prepare.sh
+      - scripts/ares-sukisu414-compat.py
+      - templates/ares414186-hyperos1-ak3.sh
+permissions:
+  contents: read
+concurrency:
+  group: k40gaming-ares-414186-sukisu-abi-candidate
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      TZ: Asia/Shanghai
+      DEVICE: ares
+      BASE_SOURCE_SHA: 72ae382f8be601f6e1b6606d9eba6084e7c54efa
+      SUKISU_SHA: c95d6e2c76adb11b0e438e518e32ac4e31f5b1d0
+    steps:
+      - name: Checkout isolated integration scripts
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Static script tests and SukiSU interface negative tests
+        run: |
+          set -euo pipefail
+          mkdir -p ares414186-evidence
+          bash -n scripts/ares414186-sukisu-prepare.sh
+          sh -n templates/ares414186-hyperos1-ak3.sh
+          python3 -m py_compile scripts/ares-sukisu414-compat.py scripts/pad2pro_sukisu40996_compat.py
+          python3 scripts/ares-sukisu414-compat.py selftest
+          python3 scripts/pad2pro_sukisu40996_compat.py selftest
+          grep -qxF 'device.name1=ares' templates/ares414186-hyperos1-ak3.sh
+          if grep -qF 'alioth' templates/ares414186-hyperos1-ak3.sh; then
+            echo "::error::Wrong Snapdragon Redmi K40 device code found"; exit 43;
+          fi
+          grep -q '4.14.186' templates/ares414186-hyperos1-ak3.sh
+          echo 'TARGET=ares_4.14.186_MT6893' > ares414186-evidence/build-status.txt
+          echo 'PLATFORM=Android13_HyperOS1_unverified_fingerprint' >> ares414186-evidence/build-status.txt
+      - name: Install LLVM18 and kernel build dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            clang-18 lld-18 llvm-18 make gcc g++ git patch zip unzip \
+            bc bison flex libssl-dev libelf-dev cpio rsync perl \
+            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
+          mkdir -p "$GITHUB_WORKSPACE/llvm18bin"
+          for t in llvm-ar llvm-nm llvm-objcopy llvm-objdump llvm-strip llvm-readelf llvm-ranlib llvm-as; do
+            p="$(command -v "$t-18" || true)"
+            if [ -z "$p" ] || [ ! -x "$p" ]; then
+              echo "::error::Missing consistent LLVM18 tool: $t-18"; exit 44;
+            fi
+            ln -s "$p" "$GITHUB_WORKSPACE/llvm18bin/$t"
+          done
+          echo "$GITHUB_WORKSPACE/llvm18bin" >> "$GITHUB_PATH"
+          clang-18 --version | head -n1
+          ld.lld-18 --version
+      - name: Fetch exact MT6893 ares Linux 4.14.186 source with known SUSFS hooks
+        run: |
+          set -euo pipefail
+          git clone --quiet --depth=1 --single-branch --branch ares-t-oss_stardustkernel --filter=blob:none \
+            https://github.com/cooollawf/Redmi-ares-K40G-4.14.186-Stardust-Kernel-ReSukiSU.git \
+            "$GITHUB_WORKSPACE/ares-src"
+          test "$(git -C ares-src rev-parse HEAD)" = "$BASE_SOURCE_SHA"
+          for line in 'VERSION = 4' 'PATCHLEVEL = 14' 'SUBLEVEL = 186'; do
+            grep -qxF "$line" ares-src/Makefile || {
+              echo "::error::Wrong ares kernel baseline: $line"; exit 45;
+            }
+          done
+          for opt in CONFIG_MTK_COMBO_WIFI=y CONFIG_MTK_COMBO_BT=y CONFIG_MTK_AB_OTA_UPDATER=y; do
+            grep -qxF "$opt" ares-src/arch/arm64/configs/ares_user_defconfig || {
+              echo "::error::Missing original MT6893 driver option: $opt"; exit 46;
+            }
+          done
+          test -s ares-src/fs/susfs.c
+          test -L ares-src/drivers/kernelsu
+          echo "ARES_VENDOR_SOURCE_PIN=$BASE_SOURCE_SHA" >> ares414186-evidence/build-status.txt
+      - name: Integrate pinned official SukiSU with KPM and existing vendor SUSFS
+        run: |
+          set -euo pipefail
+          bash scripts/ares414186-sukisu-prepare.sh "$GITHUB_WORKSPACE/ares-src" 2>&1 \
+            | tee ares414186-evidence/source-preparation.log
+          cp ares-src/ARES_SOURCE_RECORD.txt ares414186-evidence/
+          test -f ares-src/drivers/kernelsu/ksu.c
+          test "$(git -C ares-src/SukiSUOfficial rev-parse HEAD)" = "$SUKISU_SHA"
+      - name: Generate native ares defconfig and retain security WLAN and BT features
+        run: |
+          set -euo pipefail
+          cd ares-src
+          export PATH="$GITHUB_WORKSPACE/llvm18bin:$PATH"
+          make O=out ARCH=arm64 HOSTCC=clang-18 CC=clang-18 LD=ld.lld-18 \
+            LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- ares_user_defconfig
+          test -s out/.config
+          cp out/.config "$GITHUB_WORKSPACE/ares414186-evidence/actual-defconfig.txt"
+          for req in CONFIG_KSU=y CONFIG_KPM=y CONFIG_KSU_SUSFS=y CONFIG_KALLSYMS=y CONFIG_KALLSYMS_ALL=y \
+                     CONFIG_MTK_COMBO_WIFI=y CONFIG_MTK_COMBO_BT=y CONFIG_MTK_AB_OTA_UPDATER=y; do
+            grep -qxF "$req" out/.config || {
+              echo "::error::Required native KPM/SUSFS/WLAN/BT setting absent: $req"; exit 47;
+            }
+          done
+          grep -qxF 'CONFIG_ARCH_MTK_PROJECT="k6893v1_64"' out/.config || {
+            echo "::error::Original MT6893 project changed"; exit 48;
+          }
+          echo 'REAL_KPM=CONFIG_KPM_y' >> "$GITHUB_WORKSPACE/ares414186-evidence/build-status.txt"
+          echo 'REAL_SUSFS=CONFIG_KSU_SUSFS_y' >> "$GITHUB_WORKSPACE/ares414186-evidence/build-status.txt"
+          echo 'VENDOR_WLAN_BT=source_config_preserved' >> "$GITHUB_WORKSPACE/ares414186-evidence/build-status.txt"
+      - name: Compile actual arm64 Linux 4.14.186 Image.gz-dtb
+        run: |
+          set -euo pipefail
+          export PATH="$GITHUB_WORKSPACE/llvm18bin:$PATH"
+          cd ares-src
+          make -j3 O=out ARCH=arm64 HOSTCC=clang-18 CC=clang-18 \
+            LD=ld.lld-18 AS=llvm-as AR=llvm-ar NM=llvm-nm OBJDUMP=llvm-objdump \
+            OBJCOPY=aarch64-linux-gnu-objcopy STRIP=llvm-strip \
+            LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- Image.gz-dtb vmlinux \
+            2>&1 | tee "$GITHUB_WORKSPACE/ares414186-evidence/kernel-build.log"
+          test -s out/arch/arm64/boot/Image.gz-dtb
+          test -s out/vmlinux
+          test "$(stat -c %s out/arch/arm64/boot/Image.gz-dtb)" -gt 6000000
+          sha256sum out/arch/arm64/boot/Image.gz-dtb | tee "$GITHUB_WORKSPACE/ares414186-evidence/Image.gz-dtb.sha256"
+      - name: Verify linked SukiSU KPM and SUSFS symbols and build provenance
+        run: |
+          set -euo pipefail
+          export PATH="$GITHUB_WORKSPACE/llvm18bin:$PATH"
+          cd ares-src
+          strings -a out/vmlinux | grep -m1 'Linux version 4.14.186' || {
+            echo "::error::Incorrect Linux version in compiled Image"; exit 51;
+          }
+          test -s out/fs/susfs.o || { echo "::error::SUSFS not actually compiled"; exit 52; }
+          grep -qxF 'CONFIG_KPM=y' out/.config
+          grep -qxF 'CONFIG_KSU_SUSFS=y' out/.config
+          if ! nm out/vmlinux | grep -E ' [Tt] ksu_handle_execveat$'; then
+            echo "::error::Root exec hook is not strongly linked"; exit 53;
+          fi
+          echo 'SOURCE_COMPILE=PASS' >> "$GITHUB_WORKSPACE/ares414186-evidence/build-status.txt"
+          echo 'ACTUAL_HYPEROS1_FIRMWARE_VENDOR_ABI=NOT_VERIFIED' >> "$GITHUB_WORKSPACE/ares414186-evidence/build-status.txt"
+          echo 'REAL_DEVICE_BOOT_WIFI_BT=NOT_TESTED' >> "$GITHUB_WORKSPACE/ares414186-evidence/build-status.txt"
+      - name: Package guarded AnyKernel3 source-check candidate (no device writes by CI)
+        run: |
+          set -euo pipefail
+          AK="$GITHUB_WORKSPACE/AnyKernel3"
+          cp -a ares-src/AnyKernel3 "$AK"
+          cp ares-src/out/arch/arm64/boot/Image.gz-dtb "$AK/Image.gz-dtb"
+          cp templates/ares414186-hyperos1-ak3.sh "$AK/anykernel.sh"
+          cp ares-src/ARES_SOURCE_RECORD.txt "$AK/ARES_SOURCE_RECORD.txt"
+          chmod 755 "$AK/anykernel.sh"
+          sh -n "$AK/anykernel.sh"
+          test -s "$AK/tools/ak3-core.sh"
+          test -s "$AK/META-INF/com/google/android/update-binary"
+          out="RedmiK40Gaming_ares_4.14.186_SukiSU40996_KPM_SUSFS_AK3_UNTESTED_run$GITHUB_RUN_ID.zip"
+          (cd "$AK" && zip -q -r "$GITHUB_WORKSPACE/$out" . -x '*.git/*')
+          OUT="$out" python3 - <<'PY'
+          import os,zipfile,hashlib
+          path=os.environ['OUT']
+          with zipfile.ZipFile(path) as z:
+              assert z.testzip() is None, "Corrupted AnyKernel3 zip"
+              names=set(z.namelist())
+              needed={'anykernel.sh','Image.gz-dtb','META-INF/com/google/android/update-binary','tools/ak3-core.sh','ARES_SOURCE_RECORD.txt'}
+              assert needed <= names, "Missing AK3 files: "+repr(needed-names)
+              script=z.read('anykernel.sh').decode('utf-8')
+              assert 'KPM: Enabled' in script and 'SUSFS: Enabled' in script
+              assert '作者：闲心中都是莫' in script
+              assert '4.14.186*)' in script
+              assert 'split_boot' in script and 'flash_boot' in script
+              assert 'boot_before_SukiSU' in script
+              assert not any(x.strip().startswith(('reboot ','reboot;')) for x in script.splitlines())
+          print('PASS AK3 structure, CRC, SukiSU kernel and no-reboot installer')
+          print('ZIP SHA256',hashlib.sha256(open(path,'rb').read()).hexdigest())
+          PY
+          sha256sum "$out" > "$out.sha256"
+          echo "FINAL_AK3=$out" >> "$GITHUB_ENV"
+      - name: Upload experimental candidate (not a validated HyperOS production flash)
+        uses: actions/upload-artifact@v4
+        with:
+          name: RedmiK40Gaming-ares-Linux414186-SukiSU40996-UNTESTED-${{ github.run_id }}
+          path: |
+            ${{ env.FINAL_AK3 }}
+            ${{ env.FINAL_AK3 }}.sha256
+          if-no-files-found: error
+          retention-days: 15
+          compression-level: 0
+      - name: Save logs and config even if compilation fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: RedmiK40Gaming-ares-414186-diagnostics-${{ github.run_id }}
+          path: ares414186-evidence/
+          if-no-files-found: warn
+          retention-days: 15
