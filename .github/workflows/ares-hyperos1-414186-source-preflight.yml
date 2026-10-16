@@ -1,0 +1,89 @@
+name: Redmi K40 Gaming ares HyperOS1 4.14.186 Source Gate
+run-name: K40Gaming-ares-stock414186-SUSFS-KPM-preflight-${{ github.run_id }}
+on:
+  workflow_dispatch:
+  push:
+    branches: [k40gaming-ares-hyperos1-414186-20261016]
+    paths:
+      - .github/workflows/ares-hyperos1-414186-source-preflight.yml
+permissions:
+  contents: read
+concurrency:
+  group: ares-stock414186-source-preflight
+  cancel-in-progress: false
+jobs:
+  inspect-stock:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify specific HyperOS13 ares source and revision
+        run: |
+          set -euo pipefail
+          mkdir -p ares186-evidence
+          git clone --quiet --single-branch --branch T --depth=1 --filter=blob:none \
+            https://github.com/Tkpointz/android_kernel_aresin.git ares186
+          test "$(git -C ares186 rev-parse HEAD)" = d7da62641a6b27411a7f4afeb0e4686fc3b9ce34
+          grep -qx 'VERSION = 4' ares186/Makefile
+          grep -qx 'PATCHLEVEL = 14' ares186/Makefile
+          grep -qx 'SUBLEVEL = 186' ares186/Makefile
+          test -s ares186/arch/arm64/configs/ares_user_defconfig
+          grep -qF 'CONFIG_ARCH_MTK_PROJECT="k6893v1_64"' ares186/arch/arm64/configs/ares_user_defconfig
+          echo 'HARDWARE=Redmi_K40_Gaming_Enhanced_ares_MT6893' > ares186-evidence/identity.txt
+          echo 'SOURCE=Tkpointz/android_kernel_aresin' >> ares186-evidence/identity.txt
+          echo 'BRANCH=T' >> ares186-evidence/identity.txt
+          echo 'COMMIT=d7da62641a6b27411a7f4afeb0e4686fc3b9ce34' >> ares186-evidence/identity.txt
+          echo 'LINUX_BASE=4.14.186' >> ares186-evidence/identity.txt
+          echo 'TARGET_ROM=HyperOS1_Android13' >> ares186-evidence/identity.txt
+          echo 'DEVICE_STOCK_BOOT_AND_VENDOR_MODULES=NOT_YET_ACQUIRED' >> ares186-evidence/identity.txt
+      - name: Evaluate 4.14 SUSFS source patch and original HyperOS ares fixups
+        run: |
+          set -euo pipefail
+          git clone --quiet --depth=1 --branch kernel-4.14 \
+            https://github.com/ShirkNeko/susfs4ksu.git susfs414
+          test "$(git -C susfs414 rev-parse HEAD)" = e64d39431693fd1fa44331cbec4bf32a6cd302d8
+          git clone --quiet --depth=1 --branch mi_kernel \
+            https://github.com/JackA1ltman/NonGKI_Kernel_Patches.git HyperOS13fix
+          test "$(git -C HyperOS13fix rev-parse HEAD)" = 945467142d04d84aa88d73b188a4be2a89e1b107
+          test -s HyperOS13fix/k40g_hyper/susfs_155_fixed.patch
+          test -s HyperOS13fix/k40g_hyper/susfs_158_fixed.patch
+          test -s susfs414/kernel_patches/50_add_susfs_in_kernel-4.14.patch
+          if ! ( cd ares186 && patch -p1 --batch --forward --fuzz=0 --dry-run \
+                 < ../susfs414/kernel_patches/50_add_susfs_in_kernel-4.14.patch ) \
+                 > ares186-evidence/vanilla-susfs-dryrun.txt 2>&1; then
+            echo "STOCK_SUSFS_ZERO_FUZZ=FAILED; hyperOS-specific rebase required" >> ares186-evidence/identity.txt
+            tail -n 90 ares186-evidence/vanilla-susfs-dryrun.txt
+          else
+            echo "STOCK_SUSFS_ZERO_FUZZ=PASS" >> ares186-evidence/identity.txt
+          fi
+          # 3-way merge is only an isolated dry run; never ignore conflict
+          # markers and never package any partially applied source.
+          if (cd ares186 && git apply --check --3way \
+              ../susfs414/kernel_patches/50_add_susfs_in_kernel-4.14.patch) \
+              > ares186-evidence/susfs-threeway-check.txt 2>&1; then
+            echo "GIT_THREEWAY_SUSFS=PASS" >> ares186-evidence/identity.txt
+          else
+            echo "GIT_THREEWAY_SUSFS=NOT_CLEAN" >> ares186-evidence/identity.txt
+          fi
+      - name: Require official SukiSU builtin native KPM and non-GKI support
+        run: |
+          set -euo pipefail
+          git clone --quiet --depth=1 --single-branch --branch builtin \
+            https://github.com/SukiSU-Ultra/SukiSU-Ultra.git SukiSU
+          test "$(git -C SukiSU rev-parse HEAD)" = c95d6e2c76adb11b0e438e518e32ac4e31f5b1d0
+          grep -q 'config KPM' SukiSU/kernel/Kconfig
+          grep -q 'config KSU_SUSFS' SukiSU/kernel/Kconfig
+          grep -q 'ksu_handle_execveat' SukiSU/kernel/feature/sucompat.c
+          echo 'SUKISU_COMMIT=c95d6e2c76adb11b0e438e518e32ac4e31f5b1d0' >> ares186-evidence/identity.txt
+          echo 'SUKISU_KPM=SOURCE_PRESENT_NEEDS_LINK_CHECK' >> ares186-evidence/identity.txt
+          echo 'SUKISU_SUSFS=SOURCE_PRESENT_NEEDS_FULL_REBASE' >> ares186-evidence/identity.txt
+          echo 'AUTO_REBOOT=DISABLED_IN_FUTURE_INSTALLER' >> ares186-evidence/identity.txt
+          echo 'AK3_FLASH_READY=NO_UNTIL_ABI_AND_COMPILE_CHECKS' >> ares186-evidence/identity.txt
+      - name: Upload source and patch diagnostic results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: RedmiK40Gaming-ares-414186-source-diagnostics-${{ github.run_id }}
+          path: ares186-evidence/
+          if-no-files-found: warn
+          retention-days: 14
