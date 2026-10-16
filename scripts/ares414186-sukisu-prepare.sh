@@ -16,6 +16,26 @@ test "$(git -C "$SRC" rev-parse HEAD)" = "$VENDOR_SHA" || die "Unexpected vendor
 for pair in 'VERSION = 4' 'PATCHLEVEL = 14' 'SUBLEVEL = 186'; do
     grep -qxF "$pair" "$SRC/Makefile" || die "Wrong kernel baseline: $pair"
 done
+# These two warning-demotion options were added for a newer Clang release.
+# LLVM15/18 treats them as unknown -Werror flags, which makes Kbuild's
+# cc-option test falsely report that -fstack-protector-strong is unsupported.
+# Remove ONLY those unsupported optional warning controls, never the
+# requested stack protector or the actual -Werror compile safety settings.
+python3 - "$SRC/Makefile" <<'PY'
+import pathlib,sys
+p=pathlib.Path(sys.argv[1])
+s=p.read_text()
+flags=[
+    'KBUILD_CFLAGS   += -Wno-error=default-const-init-var-unsafe\n',
+    'KBUILD_CFLAGS   += -Wno-error=default-const-init-field-unsafe\n',
+]
+for line in flags:
+    if s.count(line) != 1:
+        raise SystemExit('Expected source warning option not found exactly once: '+line.strip())
+    s=s.replace(line,'',1)
+p.write_text(s)
+print('PASS: removed only 2 unsupported new-Clang warning demotions, strong stack protector preserved')
+PY
 DEF="$SRC/arch/arm64/configs/ares_user_defconfig"
 test -s "$DEF" || die "Missing ares device defconfig"
 for key in \
