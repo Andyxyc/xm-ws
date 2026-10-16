@@ -1,0 +1,95 @@
+name: Redmi K40 Gaming HyperOS1 A13 pinned SUSFS source preflight
+run-name: ares-HyperOS1-T-SUSFS-SukiSU-KPM-source-preflight-${{ github.run_id }}
+on:
+  push:
+    branches: [k40-ares-hyperos1-sukisu-source-20261016]
+    paths:
+      - .github/workflows/ares-hyperos1-mercu-susfs-preflight.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ares-mercu-susfs-patches-source-review
+  cancel-in-progress: false
+jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install static patch and source validation tools
+        run: |
+          set -euo pipefail
+          command -v git
+          command -v patch
+          command -v python3
+          command -v sha256sum
+          mkdir -p ares-compat-evidence
+      - name: Retrieve pinned HyperOS1 ares Android13 source and audited custom patchset
+        run: |
+          set -euo pipefail
+          git clone --quiet --filter=blob:none --single-branch --branch T --depth=1 \
+            https://github.com/MerCuJerry/android_kernel_aresin.git ares-source
+          git clone --quiet --filter=blob:none --single-branch --branch main --depth=1 \
+            https://github.com/MerCuJerry/xiaomi_ares_sukisu.git ares-patches
+          git clone --quiet --filter=blob:none --single-branch --branch mainline --depth=1 \
+            https://github.com/JackA1ltman/NonGKI_Kernel_Build_2nd.git susfs-4.14
+          test "$(git -C ares-source rev-parse HEAD)" = 119324ec6a6fb551720a606c57d566e89aa306b5
+          test "$(git -C ares-patches rev-parse HEAD)" = 101cb1ed8818da0ad1fb68a966536e632269ec0c
+          test "$(git -C susfs-4.14 rev-parse HEAD)" = dcd789634247c77d8549a42aef232c680a905585
+          grep -qxF 'VERSION = 4' ares-source/Makefile
+          grep -qxF 'PATCHLEVEL = 14' ares-source/Makefile
+          grep -qxF 'SUBLEVEL = 186' ares-source/Makefile
+          test -s ares-source/arch/arm64/configs/ares_user_defconfig
+          test -s susfs-4.14/Patches/Patch/susfs_patch_to_4.14.patch
+          {
+            echo 'HARDWARE=Redmi_K40_Gaming_ares'
+            echo 'SOC=MT6893_Dimensity_1200'
+            echo 'TARGET_OS=HyperOS1_Android13'
+            echo 'KERNEL_SOURCE=MerCuJerry/android_kernel_aresin@119324ec6a6fb551720a606c57d566e89aa306b5'
+            echo 'SUSFS_PATCH_OWNER=JackA1ltman/NonGKI_Kernel_Build_2nd@dcd789634247c77d8549a42aef232c680a905585'
+            echo 'PATCH_COLLECTION=MerCuJerry/xiaomi_ares_sukisu@101cb1ed8818da0ad1fb68a966536e632269ec0c'
+            echo 'RUNNING_DEVICE_KMI_NOT_VERIFIED=yes'
+          } | tee ares-compat-evidence/source.txt
+      - name: Strict zero-fuzz sequential SUSFS patch compatibility check
+        run: |
+          set -euo pipefail
+          K="$GITHUB_WORKSPACE/ares-source"
+          P="$GITHUB_WORKSPACE/ares-patches/Patches"
+          J="$GITHUB_WORKSPACE/susfs-4.14/Patches/Patch"
+          try_patch() {
+            local desc="$1" patch_file="$2"
+            test -s "$patch_file" || { echo "::error::$desc missing source"; return 60; }
+            echo "CHECK $desc: $patch_file"
+            if ! (cd "$K" && patch --batch --forward --fuzz=0 --dry-run -p1 < "$patch_file") > "ares-compat-evidence/$desc.log" 2>&1; then
+              tail -n 90 "ares-compat-evidence/$desc.log"
+              echo "::error::Source patch $desc did not match; no kernel built"
+              return 61
+            fi
+            (cd "$K" && patch --batch --forward --fuzz=0 -p1 < "$patch_file") >> "ares-compat-evidence/$desc.log" 2>&1
+            echo "PASS $desc" | tee -a ares-compat-evidence/source.txt
+          }
+          try_patch 'root-manual-hooks' "$P/susfs-syscall-hooks.patch"
+          try_patch 'selinux-export' "$P/static-symbol-export.patch"
+          try_patch 'susfs-core-4.14' "$J/susfs_patch_to_4.14.patch"
+          try_patch 'susfs-taskmmu' "$P/susfs_patch_taskmmu.patch"
+          try_patch 'susfs-T-base' "$P/susfs_patch_base.patch"
+          try_patch 'susfs-T-fdinfo' "$P/susfs_patch_fdinfo.patch"
+          try_patch 'susfs-T-readdir' "$P/susfs_patch_readdir.patch"
+          if find "$K" -type f -name '*.rej' -print -quit | grep -q .; then
+            echo '::error::Patch rejects remain'
+            exit 62
+          fi
+          (cd "$K" && git diff --stat) > ares-compat-evidence/diffstat.txt
+          echo 'SUSFS_PATCH_PREFLIGHT=success' >> ares-compat-evidence/source.txt
+          echo 'NO_KERNEL_BUILD_EXECUTED=true' >> ares-compat-evidence/source.txt
+      - name: Upload traceable source-patch diagnosis
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ares-HyperOS1-T-SUSFS-source-check-${{ github.run_id }}
+          path: ares-compat-evidence/
+          if-no-files-found: error
+          retention-days: 21
