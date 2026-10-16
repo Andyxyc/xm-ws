@@ -27,6 +27,7 @@ jobs:
       OP_TOTAL_DEVICES: '1'
       # Required even for a clean build: the upstream composite action probes both.
       CCACHE_DIR: ${{ github.workspace }}/.ccache_ace6
+      CCACHE_BASEDIR: ${{ github.workspace }}
       LDCACHE_DIR: ${{ github.workspace }}/.ld_cache_ace6
       CCACHE_MAXSIZE: 10G
       CCACHE_COMPILERCHECK: content
