@@ -54,6 +54,23 @@ jobs:
             gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
           clang-15 --version | head -n 1
           ld.lld-15 --version | head -n 1
+          # The Linux 4.14 Kbuild LLVM=1 path expects unversioned llvm-* tools.
+          # Ubuntu's llvm-15 package only exposes llvm-*-15. Add isolated
+          # aliases, without mixing tools from different LLVM releases.
+          TOOLBIN="$GITHUB_WORKSPACE/llvm15-tools"
+          mkdir -p "$TOOLBIN"
+          for name in llvm-ar llvm-nm llvm-objdump llvm-objcopy llvm-strip llvm-readelf llvm-ranlib llvm-size llvm-addr2line; do
+            src="$(command -v "$name-15" || true)"
+            test -n "$src" && test -x "$src" || {
+              echo "::error::Pinned LLVM15 binary missing: $name-15"; exit 38;
+            }
+            ln -s "$src" "$TOOLBIN/$name"
+          done
+          echo "$TOOLBIN" >> "$GITHUB_PATH"
+          export PATH="$TOOLBIN:$PATH"
+          for t in llvm-ar llvm-nm llvm-objdump llvm-objcopy llvm-strip; do
+            command -v "$t"
+          done
           df -h .
       - name: Obtain fixed actual MT6893 ares kernel source
         run: |
