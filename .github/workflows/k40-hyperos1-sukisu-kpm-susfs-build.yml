@@ -1,0 +1,199 @@
+name: Redmi K40 HyperOS1 SukiSU SUSFS KPM kernel build
+run-name: K40-alioth-4.19.325-SukiSU-4.2.1-SUSFS-KPM-${{ github.run_id }}
+on:
+  workflow_dispatch:
+  push:
+    branches: [k40-hyperos1-sukisu-kpm-susfs-20261016]
+    paths:
+      - .github/workflows/k40-hyperos1-sukisu-kpm-susfs-build.yml
+      - scripts/k40-hyperos1-prepare.sh
+      - scripts/k40-hyperos1-ksu419-compat.py
+      - templates/k40-hyperos1-sukisu-kpm-susfs-anykernel.sh
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: k40-hyperos1-sukisu-kpm-susfs-full
+  cancel-in-progress: false
+env:
+  TZ: Asia/Shanghai
+  KERNEL_SHA: 8b19a1dd26ae283a2bfc33781905255339aae485
+  SUKISU_SHA: c95d6e2c76adb11b0e438e518e32ac4e31f5b1d0
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 125
+    steps:
+      - name: Checkout isolated K40 files
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify pinned preflight, syntax, and negative tests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/38893155778" --jq .conclusion)" = success
+          bash -n scripts/k40-hyperos1-prepare.sh
+          sh -n templates/k40-hyperos1-sukisu-kpm-susfs-anykernel.sh
+          python3 -m py_compile scripts/k40-hyperos1-ksu419-compat.py scripts/pad2pro_sukisu40996_compat.py
+          python3 scripts/k40-hyperos1-ksu419-compat.py selftest
+          python3 scripts/pad2pro_sukisu40996_compat.py selftest
+      - name: Install build toolchain
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            clang lld llvm bc bison flex libssl-dev libelf-dev make gcc g++ \
+            git zip unzip patch python3 perl rsync cpio kmod \
+            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
+          clang --version | head -n 1
+      - name: Fetch and pin exact Redmi K40 4.19.325 source
+        run: |
+          set -euo pipefail
+          git clone --quiet --depth=1 --branch master \
+            https://github.com/zfdx123/kernel_xiaomi_alioth.git "$GITHUB_WORKSPACE/k40-source"
+          cd "$GITHUB_WORKSPACE/k40-source"
+          test "$(git rev-parse HEAD)" = "$KERNEL_SHA"
+          grep -qxF 'VERSION = 4' Makefile
+          grep -qxF 'PATCHLEVEL = 19' Makefile
+          grep -qxF 'SUBLEVEL = 325' Makefile
+          grep -qxF 'CONFIG_SCHED_WALT=y' arch/arm64/configs/alioth_defconfig
+      - name: Install pinned SukiSU with real KPM and SUSFS Linux4.19 kernel changes
+        run: |
+          set -euo pipefail
+          bash scripts/k40-hyperos1-prepare.sh "$GITHUB_WORKSPACE/k40-source" \
+            2>&1 | tee "$GITHUB_WORKSPACE/k40-prepare.log"
+      - name: Generate kernel config and verify actual features
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/k40-source"
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_COMPAT=arm-linux-gnueabi- alioth_defconfig
+          test -s out/.config
+          cp out/.config "$GITHUB_WORKSPACE/k40-compiled-config.txt"
+          for setting in \
+            CONFIG_KSU=y \
+            CONFIG_KSU_MANUAL_HOOK=y \
+            CONFIG_KSU_SUSFS=y \
+            CONFIG_KPM=y \
+            CONFIG_KALLSYMS=y \
+            CONFIG_KALLSYMS_ALL=y \
+            CONFIG_SCHED_WALT=y \
+            CONFIG_BOARD_ALIOTH=y; do
+            grep -qxF "$setting" out/.config || {
+              echo "::error::Kernel config requirement missing: $setting"; exit 41;
+            }
+          done
+          for bad in \
+            CONFIG_KSU_SUSFS_SUS_SU=y \
+            CONFIG_UNAME_OVERRIDE=y \
+            CONFIG_KSU_FEATURE_ADBROOT=y; do
+            if grep -qxF "$bad" out/.config; then
+              echo "::error::Unrequested or unstable kernel option: $bad"; exit 42
+            fi
+          done
+          echo 'SUSFS_ENABLED=true' >> "$GITHUB_STEP_SUMMARY"
+          echo 'KPM_ENABLED=true' >> "$GITHUB_STEP_SUMMARY"
+      - name: Compile actual arm64 Image.gz-dtb and vmlinux
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/k40-source"
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
+            -j3 Image.gz-dtb vmlinux 2>&1 | tee "$GITHUB_WORKSPACE/k40-build.log"
+          test -s out/arch/arm64/boot/Image.gz-dtb
+          test -s out/vmlinux
+          test -s out/Module.symvers
+          test "$(stat -c %s out/arch/arm64/boot/Image.gz-dtb)" -gt 6000000
+          cp out/Module.symvers "$GITHUB_WORKSPACE/k40-Module.symvers"
+          sha256sum out/arch/arm64/boot/Image.gz-dtb | tee "$GITHUB_WORKSPACE/k40-image.sha256"
+      - name: Verify strong SukiSU hooks and actual Linux version
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/k40-source"
+          for sym in ksu_handle_execveat ksu_handle_faccessat \
+            ksu_handle_stat ksu_handle_sys_reboot ksu_handle_sys_read; do
+            nm out/vmlinux | awk -v s="$sym" '$3==s && $2~/^[Tt]$/ {p=1} END{exit !p}' || {
+              echo "::error::Missing strong manual root hook: $sym"; exit 43;
+            }
+          done
+          strings -a out/vmlinux | grep -m1 'Linux version 4.19.325' || {
+            echo "::error::Linux 4.19.325 version absent from final vmlinux"; exit 44;
+          }
+          grep -qxF 'CONFIG_KSU_SUSFS=y' out/.config
+          grep -qxF 'CONFIG_KPM=y' out/.config
+          echo 'SOURCE_ONLY=BOOT_AND_WIFI_UNTESTED' >> "$GITHUB_STEP_SUMMARY"
+      - name: Package standard boot-only AnyKernel3 ZIP without auto reboot
+        run: |
+          set -euo pipefail
+          AK3="$GITHUB_WORKSPACE/AnyKernel3"
+          mkdir -p "$AK3"
+          git -C "$AK3" init -q
+          git -C "$AK3" remote add origin https://github.com/osm0sis/AnyKernel3.git
+          git -C "$AK3" fetch --quiet --depth=1 origin 020dfeccf9d7e962a48400fc94d3e451df92eead
+          git -C "$AK3" checkout --quiet --detach FETCH_HEAD
+          test "$(git -C "$AK3" rev-parse HEAD)" = 020dfeccf9d7e962a48400fc94d3e451df92eead
+          rm -rf "$AK3/.git"
+          cp "$GITHUB_WORKSPACE/k40-source/out/arch/arm64/boot/Image.gz-dtb" "$AK3/Image.gz-dtb"
+          cp "$GITHUB_WORKSPACE/templates/k40-hyperos1-sukisu-kpm-susfs-anykernel.sh" "$AK3/anykernel.sh"
+          cp "$GITHUB_WORKSPACE/k40-source/K40_SOURCE_PROVENANCE.txt" "$AK3/K40_SOURCE_PROVENANCE.txt"
+          chmod 0755 "$AK3/anykernel.sh"
+          sh -n "$AK3/anykernel.sh"
+          test -s "$AK3/tools/ak3-core.sh"
+          test -s "$AK3/META-INF/com/google/android/update-binary"
+          test -s "$AK3/Image.gz-dtb"
+          echo 'SukiSU_UAPI=5' > "$AK3/K40_FEATURES.txt"
+          echo 'SUSFS=Enabled' >> "$AK3/K40_FEATURES.txt"
+          echo 'KPM=Enabled' >> "$AK3/K40_FEATURES.txt"
+          echo 'WALT=preserved' >> "$AK3/K40_FEATURES.txt"
+          echo 'BOOT_TEST=not_performed' >> "$AK3/K40_FEATURES.txt"
+          echo 'HYPEROS_1_KERNEL_ABI=not_checked_against_device_stock_boot' >> "$AK3/K40_FEATURES.txt"
+          echo 'AUTHOR=闲心中都是莫' >> "$AK3/K40_FEATURES.txt"
+          OUT="RedmiK40_alioth_HyperOS1_4.19.325_SukiSU4.2.1_KPM_SUSFS_AK3_UNTESTED_run$GITHUB_RUN_ID.zip"
+          (cd "$AK3" && zip -qr "$GITHUB_WORKSPACE/$OUT" .)
+          OUT="$OUT" python3 - <<'PY'
+          from pathlib import Path
+          import zipfile,os,hashlib
+          path=Path(os.environ['OUT'])
+          with zipfile.ZipFile(path) as z:
+              assert z.testzip() is None, "ZIP CRC invalid"
+              names=set(z.namelist())
+              needed={"anykernel.sh","Image.gz-dtb","tools/ak3-core.sh","META-INF/com/google/android/update-binary","K40_FEATURES.txt"}
+              assert needed <= names, "Missing AK3 entry: "+repr(needed-names)
+              installer=z.read('anykernel.sh').decode()
+              assert '作者：闲心中都是莫' in installer
+              assert 'SUSFS: Enabled' in installer and 'KPM: Enabled' in installer
+              assert 'split_boot' in installer and 'flash_boot' in installer
+              assert 'boot_before_SukiSU' in installer
+              assert not any('reboot' in s for s in installer.splitlines() if s.strip().startswith(('reboot','su -c reboot')))
+              print('PASS: AK3 structure, kernel and feature flags, CRC, backup, no forced reboot')
+          print('SHA256', hashlib.sha256(path.read_bytes()).hexdigest())
+          PY
+          sha256sum "$OUT" > "$OUT.sha256"
+          echo "FINAL_AK3=$OUT" >> "$GITHUB_ENV"
+      - name: Upload only completed kernel package
+        uses: actions/upload-artifact@v4
+        with:
+          name: RedmiK40-HyperOS1-SukiSU4.2.1-SUSFS-KPM-AK3-UNTESTED-${{ github.run_id }}
+          path: |
+            ${{ env.FINAL_AK3 }}
+            ${{ env.FINAL_AK3 }}.sha256
+          if-no-files-found: error
+          retention-days: 15
+          compression-level: 0
+      - name: Upload build evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: RedmiK40-HyperOS1-build-diagnostics-${{ github.run_id }}
+          path: |
+            k40-prepare.log
+            k40-build.log
+            k40-compiled-config.txt
+            k40-Module.symvers
+            k40-image.sha256
+          if-no-files-found: warn
+          retention-days: 15
