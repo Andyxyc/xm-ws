@@ -1,0 +1,37 @@
+name: Stop queued wrong-device alioth jobs
+run-name: Cancel-other-alioth-runs-${{ github.run_id }}
+on:
+  push:
+    branches: [k40-gaming-ares-hyperos1-20261016]
+    paths:
+      - .github/workflows/k40-ares-stop-remaining-alioth.yml
+  workflow_dispatch:
+permissions:
+  actions: write
+  contents: read
+jobs:
+  cancel-wrong-model:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Cancel only invalid K40 alioth job IDs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for RUN in 38895170773 38895196778; do
+            info="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN")"
+            name="$(printf '%s' "$info" | jq -r '.name')"
+            branch="$(printf '%s' "$info" | jq -r '.head_branch')"
+            status="$(printf '%s' "$info" | jq -r '.status')"
+            case "$name:$branch" in
+              K40-alioth-4.19.325-*:k40-hyperos1-sukisu-kpm-susfs-20261016) ;;
+              *) echo "::error::Refuse to cancel unrelated run $RUN"; exit 42 ;;
+            esac
+            if [ "$status" = completed ]; then
+              echo "Wrong-device run $RUN already ended, status $status."
+            else
+              gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$RUN/cancel"
+              echo "Cancel requested for wrong-device alioth run $RUN"
+            fi
+          done
