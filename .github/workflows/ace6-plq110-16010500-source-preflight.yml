@@ -1,0 +1,108 @@
+name: Ace6 PLQ110 ColorOS16.0.10.500 SukiSU source compatibility
+run-name: Ace6-PLQ110-6.6.118-SukiSU-SUSFS-KPM-preflight-${{ github.run_id }}
+on:
+  push:
+    branches: [ace6-plq110-coloros16-sukisu-20261016]
+    paths:
+      - .github/workflows/ace6-plq110-16010500-source-preflight.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ace6-plq110-source-preflight
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Prepare evidence and verify exact Ace6 official source pins
+        run: |
+          set -euo pipefail
+          mkdir -p ace6-evidence
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          info = {
+            "hardware": "OnePlus Ace 6 / PLQ110 / ktm / SM8750",
+            "requested_firmware": "PLQ110_16.0.10.500(CN01B110P02)",
+            "requested_android": 16,
+            "reported_kernel": "6.6.118-android15-8-g93e223c276e7-abogki500782043-4k",
+            "published_source_firmware": "PLQ110_16.0.9.401(CN01)",
+            "firmware_matches_published_source": False,
+            "kernel_common": "65b954a773b183a9999b06bb1b2f921f12eaaf11",
+            "kernel_msm": "affd9c73e846c6a0e4c8d564f5baedd448a65570",
+            "kernel_modules_and_dt": "b8d60e4ca773ae7ffcfa62fe9611f2454561b556",
+            "susfs": "3f6aae536724af0df3dfa15f932034d14a5dbc5c",
+            "sukisu_builtin": "c95d6e2c76adb11b0e438e518e32ac4e31f5b1d0",
+            "purpose": "source-only kernel build candidate, not validated for boot or Wi-Fi",
+            "do_not_flash_without_vendor_abi": True
+          }
+          Path('ace6-evidence/target.json').write_text(json.dumps(info,indent=2,ensure_ascii=False)+"\n")
+          PY
+          for repo in \
+            android_kernel_common_oneplus_sm8750 \
+            android_kernel_oneplus_sm8750 \
+            android_kernel_modules_and_devicetree_oneplus_sm8750; do
+            ref="$(git ls-remote "https://github.com/OnePlusOSS/$repo.git" refs/heads/oneplus/sm8750_b_16.0.0_ace_6 | awk '{print $1}')"
+            test -n "$ref" || { echo "::error::Official Ace6 branch missing in $repo"; exit 21; }
+            printf '%s=%s\n' "$repo" "$ref" | tee -a ace6-evidence/refs.txt
+          done
+          grep -qx 'android_kernel_common_oneplus_sm8750=65b954a773b183a9999b06bb1b2f921f12eaaf11' ace6-evidence/refs.txt
+          grep -qx 'android_kernel_oneplus_sm8750=affd9c73e846c6a0e4c8d564f5baedd448a65570' ace6-evidence/refs.txt
+          grep -qx 'android_kernel_modules_and_devicetree_oneplus_sm8750=b8d60e4ca773ae7ffcfa62fe9611f2454561b556' ace6-evidence/refs.txt
+      - name: Clone official Ace6 6.6.118 common source at immutable revision
+        run: |
+          set -euo pipefail
+          git -c http.version=HTTP/1.1 clone --quiet --depth=1 --single-branch --filter=blob:none \
+            --branch oneplus/sm8750_b_16.0.0_ace_6 \
+            https://github.com/OnePlusOSS/android_kernel_common_oneplus_sm8750.git ace6-common
+          test "$(git -C ace6-common rev-parse HEAD)" = 65b954a773b183a9999b06bb1b2f921f12eaaf11
+          grep -qx 'VERSION = 6' ace6-common/Makefile
+          grep -qx 'PATCHLEVEL = 6' ace6-common/Makefile
+          grep -qx 'SUBLEVEL = 118' ace6-common/Makefile
+          grep -qx 'CLANG_VERSION=r510928' ace6-common/build.config.constants
+          test -s ace6-common/arch/arm64/configs/gki_defconfig
+          echo 'OFFICIAL_SOURCE_CANDIDATE=PLQ110_16.0.9.401_not_16.0.10.500' >> ace6-evidence/refs.txt
+      - name: Probe exact SUSFS 2.3.0 kernel patch against official Ace6 code
+        run: |
+          set -euo pipefail
+          git clone --quiet --depth=1 --single-branch --branch oki-android15-6.6 \
+            https://github.com/cctv18/susfs4oki.git susfs-66
+          test "$(git -C susfs-66 rev-parse HEAD)" = 3f6aae536724af0df3dfa15f932034d14a5dbc5c
+          grep -qx 'version=v2.3.0' susfs-66/ksu_module_susfs/module.prop
+          test -s susfs-66/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch
+          if ! (cd ace6-common && patch -p1 --batch --forward --fuzz=0 --dry-run \
+             < ../susfs-66/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch) \
+             > ace6-evidence/susfs-dry-run.log 2>&1; then
+            tail -n 100 ace6-evidence/susfs-dry-run.log
+            echo 'SUSFS_STRICT_PATCH=FAILED' >> ace6-evidence/refs.txt
+            echo "::error::SUSFS 2.3.0 patch is not strictly applicable; a reviewed rebase is required."
+            exit 31
+          fi
+          echo 'SUSFS_STRICT_PATCH=PASS' >> ace6-evidence/refs.txt
+      - name: Verify official SukiSU KPM kernel sources and manager protocol
+        run: |
+          set -euo pipefail
+          git clone --quiet --depth=1 --single-branch --branch builtin \
+            https://github.com/SukiSU-Ultra/SukiSU-Ultra.git SukiSU
+          test "$(git -C SukiSU rev-parse HEAD)" = c95d6e2c76adb11b0e438e518e32ac4e31f5b1d0
+          grep -q '^config KPM' SukiSU/kernel/Kconfig
+          grep -q '^config KSU_SUSFS' SukiSU/kernel/Kconfig
+          grep -qF 'KSU_IOCTL_KPM' SukiSU/kernel/include/uapi/supercall.h
+          python3 -m py_compile scripts/pad2pro_sukisu40996_compat.py
+          python3 scripts/pad2pro_sukisu40996_compat.py selftest
+          bash -n scripts/ace5pro_fix_uapi5.sh
+          echo 'SUKISU_KPM_AND_SUSFS_SOURCE=VERIFIED' >> ace6-evidence/refs.txt
+          echo 'LIVE_FIRMWARE_VENDOR_ABI=NOT_VERIFIED' >> ace6-evidence/refs.txt
+      - name: Save preflight logs on failure or success
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Ace6-PLQ110-16010500-compatibility-diagnostics-${{ github.run_id }}
+          path: ace6-evidence/
+          if-no-files-found: warn
+          retention-days: 30
