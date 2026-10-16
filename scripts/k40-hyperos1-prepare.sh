@@ -41,6 +41,7 @@ git clone --quiet --depth=1 --single-branch --branch builtin \
 note "Correcting verified 40996 builtin manager ioctl 106 / KPM ioctl 200 mismatch"
 python3 "$WORKSPACE/scripts/pad2pro_sukisu40996_compat.py" apply "$KERNEL_ROOT/KernelSU" || error "Manager/KPM UAPI mismatch"
 python3 "$WORKSPACE/scripts/k40-hyperos1-ksu419-compat.py" apply "$KERNEL_ROOT/KernelSU" || error "Linux4.19 source compatibility failed"
+python3 "$WORKSPACE/scripts/k40-hyperos1-susfs-syscall-abi.py" apply "$KERNEL_ROOT/KernelSU" "$KERNEL_ROOT" || error "K40 SUSFS manual syscall ABI incompatible"
 
 # Kernel SukiSU 4.2.0 defaults to UAPI2, while latest matching manager uses
 # UAPI5. Backport existing protocol declarations only AFTER verifying the
