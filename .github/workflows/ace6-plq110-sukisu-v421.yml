@@ -6,6 +6,8 @@ on:
     branches: [SukiSU-Ultra]
     paths:
       - .github/workflows/ace6-plq110-sukisu-v421.yml
+      - scripts/ace6_susfs_v421_compat.py
+      - scripts/ace6_susfs_v421_abi_bridge.py
   workflow_dispatch:
 
 permissions:
