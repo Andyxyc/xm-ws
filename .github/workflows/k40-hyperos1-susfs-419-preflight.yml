@@ -1,0 +1,57 @@
+name: Redmi K40 HyperOS1 Linux4.19 SUSFS KPM preflight
+run-name: K40-alioth-4.19.325-SUSFS-KPM-preflight-${{ github.run_id }}
+on:
+  workflow_dispatch:
+  push:
+    branches: [k40-hyperos1-sukisu-kpm-susfs-20261016]
+    paths:
+      - .github/workflows/k40-hyperos1-susfs-419-preflight.yml
+permissions:
+  contents: read
+concurrency:
+  group: k40-hyperos1-source-preflight
+  cancel-in-progress: false
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Confirm tools and kernel
+        run: |
+          set -euo pipefail
+          for tool in git patch python3 bash; do command -v "$tool"; done
+      - name: Test exact 4.19 SUSFS patch against Redmi K40 vendor source
+        run: |
+          set -euo pipefail
+          mkdir -p k40-evidence
+          export KERNEL_SRC="$GITHUB_WORKSPACE/k40-source"
+          git clone --quiet --depth=1 --branch master https://github.com/zfdx123/kernel_xiaomi_alioth.git "$KERNEL_SRC"
+          test "$(git -C "$KERNEL_SRC" rev-parse HEAD)" = 8b19a1dd26ae283a2bfc33781905255339aae485
+          git clone --quiet --depth=1 --branch kernel-4.19 https://github.com/ShirkNeko/susfs4ksu.git susfs4ksu-419
+          test "$(git -C susfs4ksu-419 rev-parse HEAD)" = 1f764cfb8ddc3b19d7624731051d1000d629175b
+          git clone --quiet --depth=1 --branch builtin https://github.com/SukiSU-Ultra/SukiSU-Ultra.git SukiSU
+          test "$(git -C SukiSU rev-parse HEAD)" = c95d6e2c76adb11b0e438e518e32ac4e31f5b1d0
+          test -s susfs4ksu-419/kernel_patches/50_add_susfs_in_kernel-4.19.patch
+          for k in CONFIG_SCHED_WALT=y CONFIG_KSU_MANUAL_HOOK=y; do
+            grep -qxF "$k" "$KERNEL_SRC/arch/arm64/configs/alioth_defconfig"
+          done
+          if ! (cd "$KERNEL_SRC" && patch --batch --forward --fuzz=0 --dry-run -p1 < "$GITHUB_WORKSPACE/susfs4ksu-419/kernel_patches/50_add_susfs_in_kernel-4.19.patch") > k40-evidence/susfs-419-dryrun.txt 2>&1; then
+            tail -n 140 k40-evidence/susfs-419-dryrun.txt
+            echo "::error::Linux 4.19 SUSFS patch does not apply cleanly. Do not package an incomplete kernel."
+            exit 30
+          fi
+          echo 'PATCH_PASSED=true' | tee k40-evidence/result.txt
+          echo 'SUKISU_COMMIT=c95d6e2c76adb11b0e438e518e32ac4e31f5b1d0' >> k40-evidence/result.txt
+          echo 'SUSFS_COMMIT=1f764cfb8ddc3b19d7624731051d1000d629175b' >> k40-evidence/result.txt
+          echo 'LIVE_ROM_BOOT_COMPATIBILITY=NOT_TESTED' >> k40-evidence/result.txt
+      - name: Save full patch-check evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: RedmiK40-SUSFS419-preflight-${{ github.run_id }}
+          path: k40-evidence/
+          if-no-files-found: warn
+          retention-days: 14
