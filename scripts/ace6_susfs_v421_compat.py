@@ -38,9 +38,19 @@ if [ -f "$_ace6_rej" ]; then
   grep -Fq 'void ksu_handle_execveat_ksud(const char *path, struct user_arg_ptr *argv)' "$_ace6_target" || {
     echo "::error::Pinned SukiSU path/argv implementation changed"; exit 1;
   }
-  grep -Fq 'ksu_handle_execveat_ksud(path, &argv);' "$_ace6_target" || {
-    echo "::error::Pinned SukiSU callsite missing"; exit 1;
+  # SUSFS has already removed the old syscall-hook dispatcher callsite.
+  # Do not whitelist a rejected ABI edit without supplying the new dispatcher
+  # callback: the header, its callsite, and source static keys must all agree.
+  if grep -Fq 'ksu_handle_execveat_ksud(path, &argv);' "$_ace6_target"; then
+    echo "::error::Stale SukiSU old dispatcher callsite remains"; exit 1;
+  fi
+  grep -Fq 'int ksu_handle_execveat_ksud(int *fd, struct filename **filename_ptr,' kernel/runtime/ksud.h || {
+    echo "::error::SUSFS dispatcher prototype missing"; exit 1;
   }
+  grep -Fq 'ksu_handle_execveat_ksud(fd, filename_ptr, argv, envp, flags)' kernel/supercall/dispatch.c || {
+    echo "::error::SUSFS dispatcher callsite missing"; exit 1;
+  }
+  python3 "$GITHUB_WORKSPACE/ace6-patches/scripts/ace6_susfs_v421_abi_bridge.py" --apply "$_ace6_target"
   if grep -Eq '^\+[^+].*(susfs_|CONFIG_KSU_SUSFS)' "$_ace6_rej"; then
     echo "::error::Rejected hunk carries SUSFS additions; manual merge required"; exit 1;
   fi
