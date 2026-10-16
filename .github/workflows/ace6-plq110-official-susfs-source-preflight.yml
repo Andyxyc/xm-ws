@@ -1,0 +1,90 @@
+name: OnePlus Ace6 PLQ110 stock-source 6.6.118 SUSFS compatibility preflight
+run-name: Ace6-PLQ110-6.6.118-SUSFS-preflight-${{ github.run_id }}
+on:
+  workflow_dispatch:
+  push:
+    branches: [ace6-plq110-16010500-sukisu-20261016]
+    paths:
+      - .github/workflows/ace6-plq110-official-susfs-source-preflight.yml
+permissions:
+  contents: read
+concurrency:
+  group: ace6-plq110-pinned-susfs-preflight
+  cancel-in-progress: false
+jobs:
+  check-source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - name: Record exact source and firmware boundaries
+        run: |
+          set -euo pipefail
+          mkdir -p ace6-evidence
+          cat > ace6-evidence/source-manifest.txt <<'EOF'
+          DEVICE=OnePlus_Ace6_PLQ110_ktm_SM8750
+          SCREENSHOT_FIRMWARE=PLQ110_16.0.10.500(CN01B110P02)
+          SCREENSHOT_RELEASE=6.6.118-android15-8-g93e223c276e7-abogki500782043-4k
+          OFFICIAL_SOURCE_FIRMWARE=PLQ110_16.0.9.401(CN01)
+          COMMON_REPO=OnePlusOSS/android_kernel_common_oneplus_sm8750
+          COMMON_COMMIT=65b954a773b183a9999b06bb1b2f921f12eaaf11
+          VENDOR_KERNEL_REPO=OnePlusOSS/android_kernel_oneplus_sm8750
+          VENDOR_KERNEL_COMMIT=affd9c73e846c6a0e4c8d564f5baedd448a65570
+          VENDOR_MODULES_REPO=OnePlusOSS/android_kernel_modules_and_devicetree_oneplus_sm8750
+          VENDOR_MODULES_COMMIT=b8d60e4ca773ae7ffcfa62fe9611f2454561b556
+          SUSFS_REPO=cctv18/susfs4oki
+          SUSFS_COMMIT=3f6aae536724af0df3dfa15f932034d14a5dbc5c
+          SUKISU_BUILTIN_COMMIT=c95d6e2c76adb11b0e438e518e32ac4e31f5b1d0
+          SUKISU_MAIN_COMMIT=2aed04fcfdff9ad53041ffd84a291573993fa538
+          SOURCE_FIRMWARE_ABI_VERIFIED=no
+          DEVICE_BOOT_WIFI_BT_TEST=not_performed
+          BOOT_FLASH_PERMISSION=not_granted_by_source_preflight
+          EOF
+      - name: Clone exact OnePlusOSS Ace6 kernel 6.6.118 source
+        run: |
+          set -euo pipefail
+          git clone --quiet --filter=blob:none --single-branch --depth=1 \
+            --branch oneplus/sm8750_b_16.0.0_ace_6 \
+            https://github.com/OnePlusOSS/android_kernel_common_oneplus_sm8750.git common
+          test "$(git -C common rev-parse HEAD)" = 65b954a773b183a9999b06bb1b2f921f12eaaf11
+          for kv in 'VERSION = 6' 'PATCHLEVEL = 6' 'SUBLEVEL = 118'; do
+            grep -qxF "$kv" common/Makefile || { echo "::error::Unexpected kernel version: $kv"; exit 40; }
+          done
+          test -s common/arch/arm64/configs/gki_defconfig
+          grep -qxF 'CLANG_VERSION=r510928' common/build.config.constants
+          echo 'Official Ace6 source is 6.6.118 (PLQ110_16.0.9.401) with Clang r510928' >> ace6-evidence/source-check.txt
+      - name: Strict SUSFS 6.6 patch dry run before changing any source
+        run: |
+          set -euo pipefail
+          git clone --quiet --filter=blob:none --single-branch --depth=1 \
+            --branch oki-android15-6.6 https://github.com/cctv18/susfs4oki.git susfs
+          test "$(git -C susfs rev-parse HEAD)" = 3f6aae536724af0df3dfa15f932034d14a5dbc5c
+          PATCH="$GITHUB_WORKSPACE/susfs/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch"
+          test -s "$PATCH"
+          if ! (cd common && patch --batch --fuzz=0 --forward --dry-run -p1 < "$PATCH") \
+             > ace6-evidence/patch-dryrun.txt 2>&1; then
+            tail -n 130 ace6-evidence/patch-dryrun.txt
+            echo "::error::Official Ace6 6.6.118 source is NOT an exact match for pinned SUSFS patch."
+            exit 41
+          fi
+          echo 'SUSFS_ZERO_FUZZ_DRY_RUN=PASS' >> ace6-evidence/source-manifest.txt
+      - name: Verify stable SukiSU builtin KPM and SUSFS source support
+        run: |
+          set -euo pipefail
+          git clone --quiet --single-branch --depth=1 --branch builtin \
+            https://github.com/SukiSU-Ultra/SukiSU-Ultra.git KernelSU
+          test "$(git -C KernelSU rev-parse HEAD)" = c95d6e2c76adb11b0e438e518e32ac4e31f5b1d0
+          grep -q '^config KPM$' KernelSU/kernel/Kconfig
+          grep -q '^config KSU_SUSFS$' KernelSU/kernel/Kconfig
+          grep -q 'KSU_IOCTL_KPM' KernelSU/kernel/include/uapi/supercall.h
+          test -s KernelSU/kernel/setup.sh
+          echo 'NATIVE_KPM_SOURCE=present' >> ace6-evidence/source-manifest.txt
+          echo 'BUILTIN_SUSFS_SOURCE=present' >> ace6-evidence/source-manifest.txt
+      - name: Preserve all source-check evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Ace6-PLQ110-6.6.118-SUSFS-source-evidence-${{ github.run_id }}
+          path: ace6-evidence/
+          if-no-files-found: warn
+          retention-days: 30
