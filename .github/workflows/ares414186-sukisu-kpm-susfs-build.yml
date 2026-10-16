@@ -44,25 +44,25 @@ jobs:
           grep -q '4.14.186' templates/ares414186-hyperos1-ak3.sh
           echo 'TARGET=ares_4.14.186_MT6893' > ares414186-evidence/build-status.txt
           echo 'PLATFORM=Android13_HyperOS1_unverified_fingerprint' >> ares414186-evidence/build-status.txt
-      - name: Install LLVM18 and kernel build dependencies
+      - name: Install LLVM15 and kernel build dependencies
         run: |
           set -euo pipefail
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            clang-18 lld-18 llvm-18 make gcc g++ git patch zip unzip \
+            clang-15 lld-15 llvm-15 make gcc g++ git patch zip unzip \
             bc bison flex libssl-dev libelf-dev cpio rsync perl \
             gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
-          mkdir -p "$GITHUB_WORKSPACE/llvm18bin"
+          mkdir -p "$GITHUB_WORKSPACE/llvm15bin"
           for t in llvm-ar llvm-nm llvm-objcopy llvm-objdump llvm-strip llvm-readelf llvm-ranlib llvm-as; do
-            p="$(command -v "$t-18" || true)"
+            p="$(command -v "$t-15" || true)"
             if [ -z "$p" ] || [ ! -x "$p" ]; then
-              echo "::error::Missing consistent LLVM18 tool: $t-18"; exit 44;
+              echo "::error::Missing consistent LLVM15 tool: $t-15"; exit 44;
             fi
-            ln -s "$p" "$GITHUB_WORKSPACE/llvm18bin/$t"
+            ln -s "$p" "$GITHUB_WORKSPACE/llvm15bin/$t"
           done
-          echo "$GITHUB_WORKSPACE/llvm18bin" >> "$GITHUB_PATH"
-          clang-18 --version | head -n1
-          ld.lld-18 --version
+          echo "$GITHUB_WORKSPACE/llvm15bin" >> "$GITHUB_PATH"
+          clang-15 --version | head -n1
+          ld.lld-15 --version
       - name: Fetch exact MT6893 ares Linux 4.14.186 source with known SUSFS hooks
         run: |
           set -euo pipefail
@@ -95,8 +95,8 @@ jobs:
         run: |
           set -euo pipefail
           cd ares-src
-          export PATH="$GITHUB_WORKSPACE/llvm18bin:$PATH"
-          make O=out ARCH=arm64 HOSTCC=clang-18 CC=clang-18 LD=ld.lld-18 \
+          export PATH="$GITHUB_WORKSPACE/llvm15bin:$PATH"
+          make O=out ARCH=arm64 HOSTCC=clang-15 CC=clang-15 LD=ld.lld-15 \
             LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- ares_user_defconfig
           test -s out/.config
@@ -116,10 +116,10 @@ jobs:
       - name: Compile actual arm64 Linux 4.14.186 Image.gz-dtb
         run: |
           set -euo pipefail
-          export PATH="$GITHUB_WORKSPACE/llvm18bin:$PATH"
+          export PATH="$GITHUB_WORKSPACE/llvm15bin:$PATH"
           cd ares-src
-          make -j3 O=out ARCH=arm64 HOSTCC=clang-18 CC=clang-18 \
-            LD=ld.lld-18 AS=llvm-as AR=llvm-ar NM=llvm-nm OBJDUMP=llvm-objdump \
+          make -j3 O=out ARCH=arm64 HOSTCC=clang-15 CC=clang-15 \
+            LD=ld.lld-15 AS=llvm-as AR=llvm-ar NM=llvm-nm OBJDUMP=llvm-objdump \
             OBJCOPY=aarch64-linux-gnu-objcopy STRIP=llvm-strip \
             LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- Image.gz-dtb vmlinux \
@@ -131,7 +131,7 @@ jobs:
       - name: Verify linked SukiSU KPM and SUSFS symbols and build provenance
         run: |
           set -euo pipefail
-          export PATH="$GITHUB_WORKSPACE/llvm18bin:$PATH"
+          export PATH="$GITHUB_WORKSPACE/llvm15bin:$PATH"
           cd ares-src
           strings -a out/vmlinux | grep -m1 'Linux version 4.14.186' || {
             echo "::error::Incorrect Linux version in compiled Image"; exit 51;
