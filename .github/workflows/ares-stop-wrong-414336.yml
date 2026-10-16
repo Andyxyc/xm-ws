@@ -1,0 +1,36 @@
+name: Cancel mismatched ares 4.14.336 build
+run-name: Stop-ares-4.14.336-${{ github.run_id }}
+on:
+  push:
+    branches: [k40-gaming-ares-hyperos1-20261016]
+    paths:
+      - .github/workflows/ares-stop-wrong-414336.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: write
+jobs:
+  cancel-wrong-version:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Cancel only invalid running 4.14.336 candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          run=38896801375
+          info="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run")"
+          name="$(printf '%s' "$info" | jq -r '.name')"
+          branch="$(printf '%s' "$info" | jq -r '.head_branch')"
+          status="$(printf '%s' "$info" | jq -r '.status')"
+          case "$name:$branch" in
+            K40Gaming-ares-4.14.336-*:k40-gaming-ares-hyperos1-20261016) ;;
+            *) echo "::error::Unexpected run identity; refusing cancellation"; exit 43 ;;
+          esac
+          if [ "$status" = completed ]; then
+            echo "Already finished: $run. Discard all artifacts due to wrong 4.14.336 base."
+          else
+            gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$run/cancel"
+            echo "Cancellation requested for mismatched version: $run"
+          fi
