@@ -39,6 +39,24 @@ jobs:
           ref: 4f677f6f1ca5ecb079741dd68f78324754dca75b
           persist-credentials: false
 
+      - name: Checkout pinned Ace6 SukiSU compatibility adapter
+        uses: actions/checkout@v4
+        with:
+          repository: Andyxyc/xm-ws
+          ref: ${{ github.sha }}
+          path: ace6-patches
+          persist-credentials: false
+
+      - name: Validate and apply pinned native execveat ABI reconciliation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile ace6-patches/scripts/ace6_susfs_v421_compat.py
+          python3 ace6-patches/scripts/ace6_susfs_v421_compat.py --selftest
+          python3 ace6-patches/scripts/ace6_susfs_v421_compat.py --apply configs/apply_susfs_patches.sh
+          bash -n configs/apply_susfs_patches.sh
+          grep -q 'ACE6_V421_KSUD_ABI_ONLY_REJECT_GUARD_20261016' configs/apply_susfs_patches.sh
+
       - name: Prepare exact OnePlus Ace 6 configuration
         id: config
         shell: bash
