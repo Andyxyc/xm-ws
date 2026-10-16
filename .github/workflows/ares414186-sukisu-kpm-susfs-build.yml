@@ -7,6 +7,7 @@ on:
     paths:
       - .github/workflows/ares414186-sukisu-kpm-susfs-build.yml
       - scripts/ares414186-sukisu-prepare.sh
+      - scripts/ares414186-compiler-trace.sh
       - scripts/ares-sukisu414-compat.py
       - templates/ares414186-hyperos1-ak3.sh
 permissions:
@@ -113,6 +114,29 @@ jobs:
           echo 'REAL_KPM=CONFIG_KPM_y' >> "$GITHUB_WORKSPACE/ares414186-evidence/build-status.txt"
           echo 'REAL_SUSFS=CONFIG_KSU_SUSFS_y' >> "$GITHUB_WORKSPACE/ares414186-evidence/build-status.txt"
           echo 'VENDOR_WLAN_BT=source_config_preserved' >> "$GITHUB_WORKSPACE/ares414186-evidence/build-status.txt"
+      - name: Verify real stack protector flag and diagnose original Kbuild compiler test
+        run: |
+          set -euo pipefail
+          export PATH="$GITHUB_WORKSPACE/llvm15bin:$PATH"
+          export ARES_CC_TRACE_FILE="$GITHUB_WORKSPACE/ares414186-evidence/compiler-failures.log"
+          chmod 755 "$GITHUB_WORKSPACE/scripts/ares414186-compiler-trace.sh"
+          bash -n "$GITHUB_WORKSPACE/scripts/ares414186-compiler-trace.sh"
+          clang-15 -Werror --target=aarch64-linux-gnu -fstack-protector-strong \
+            -c -x c /dev/null -o "$GITHUB_WORKSPACE/ares414186-evidence/stack-test.o"
+          test -s "$GITHUB_WORKSPACE/ares414186-evidence/stack-test.o"
+          cd ares-src
+          if ! make O=out ARCH=arm64 HOSTCC=clang-15 \
+            CC="$GITHUB_WORKSPACE/scripts/ares414186-compiler-trace.sh" LD=ld.lld-15 \
+            LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- prepare-compiler-check \
+            > "$GITHUB_WORKSPACE/ares414186-evidence/compiler-check.log" 2>&1; then
+            tail -n 70 "$GITHUB_WORKSPACE/ares414186-evidence/compiler-check.log"
+            echo '=== Actual rejected compiler flags (last 120 lines) ==='
+            tail -n 120 "$ARES_CC_TRACE_FILE" || true
+            echo "::error::Compiler rejected a stack-protector configuration. Do not disable protection as a workaround."
+            exit 61
+          fi
+          echo 'STACK_PROTECTOR_CROSS_COMPILER_TEST=PASS' >> "$GITHUB_WORKSPACE/ares414186-evidence/build-status.txt"
       - name: Compile actual arm64 Linux 4.14.186 Image.gz-dtb
         run: |
           set -euo pipefail
