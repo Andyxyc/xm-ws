@@ -1,0 +1,185 @@
+name: Ace6 PLQ110 ColorOS16 6.6.118 SukiSU SUSFS KPM build
+run-name: Ace6-PLQ110-16.0.10.500-6.6.118-SukiSU-SUSFS-KPM-${{ github.run_id }}
+on:
+  push:
+    branches: [ace6-plq110-coloros16-20261016]
+    paths:
+      - .github/workflows/ace6-plq110-coloros16-sukisu-full-build.yml
+      - scripts/ace6_plq110_kernel_build.py
+      - scripts/ace6_susfs_builtin_hook_adapter.py
+      - templates/ace6_plq110_sukisu_ak3.sh
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: ace6-plq110-6.6.118-gki-full-build
+  cancel-in-progress: false
+env:
+  TZ: Asia/Shanghai
+  ARES: not_this_device
+  GIT_TERMINAL_PROMPT: "0"
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 210
+    steps:
+      - name: Checkout pinned Ace6 build project
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validate Python, shell and positive-negative regression tests
+        run: |
+          set -euo pipefail
+          mkdir -p ace6_diagnostics
+          python3 -m py_compile scripts/ace6_plq110_kernel_build.py \
+            scripts/ace6_susfs_builtin_hook_adapter.py scripts/pad2pro_sukisu40996_compat.py
+          sh -n templates/ace6_plq110_sukisu_ak3.sh
+          bash -n scripts/ace5pro_fix_uapi5.sh
+          python3 scripts/ace6_plq110_kernel_build.py selftest 2>&1 | tee ace6_diagnostics/selftest.log
+      - name: Prepare ephemeral runner space and Clang18 dependencies
+        run: |
+          set -euo pipefail
+          echo "Initial free disk:"
+          df -h .
+          # GitHub ephemeral runner: remove unused SDKs only here, never on users' PCs.
+          free_mb="$(df -Pm . | awk 'NR==2{print $4}')"
+          if [ "$free_mb" -lt 27000 ]; then
+            sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android \
+              /usr/local/share/boost /usr/local/share/powershell /opt/hostedtoolcache/CodeQL
+          fi
+          sudo apt-get -o Acquire::Retries=3 update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            git ca-certificates curl unzip zip file jq build-essential make gcc g++ \
+            bison flex bc libssl-dev libelf-dev zlib1g-dev rsync cpio xz-utils \
+            python3 dwarves pahole kmod patch gcc-aarch64-linux-gnu \
+            gcc-arm-linux-gnueabi
+          df -h .
+      - name: Obtain exact vendor-requested Clang18 r510928
+        run: |
+          set -euo pipefail
+          TOOL="$GITHUB_WORKSPACE/ace6_toolchain"
+          mkdir -p "$TOOL"
+          ARCHIVE="$RUNNER_TEMP/clang-r510928.zip"
+          curl --retry 3 --retry-delay 8 --connect-timeout 30 \
+            -fL "https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang18-r510928/clang-r510928.zip" \
+            -o "$ARCHIVE"
+          test "$(stat -c %s "$ARCHIVE")" -ge 800000000 || {
+            echo "::error::Pinned Clang18 archive is incomplete"; exit 30;
+          }
+          unzip -tqq "$ARCHIVE"
+          unzip -q "$ARCHIVE" -d "$TOOL"
+          rm -f "$ARCHIVE"
+          test -x "$TOOL/bin/clang" || {
+            echo "::error::Clang18-r510928 distribution layout changed"; exit 31;
+          }
+          "$TOOL/bin/clang" --version | tee ace6_diagnostics/compiler.txt
+          grep -E 'clang version 18\.' ace6_diagnostics/compiler.txt || {
+            echo "::error::Expected Android Clang18-r510928"; exit 32;
+          }
+          test -x "$TOOL/bin/ld.lld"
+          echo "$TOOL/bin" >> "$GITHUB_PATH"
+          echo 'Compiler pin: Android clang-r510928' >> "$GITHUB_STEP_SUMMARY"
+          df -h .
+      - name: Prepare exact official Ace6 kernel and strictly integrate pinned SukiSU+SUSFS
+        run: |
+          set -euo pipefail
+          python3 -u scripts/ace6_plq110_kernel_build.py prepare \
+            2>&1 | tee ace6_diagnostics/prepare.log
+          test -s ace6_diagnostics/prepared.json
+          test -s ace6_diagnostics/custom-source.patch
+      - name: Build unmodified official Ace6 common source baseline
+        run: |
+          set -euo pipefail
+          python3 -u scripts/ace6_plq110_kernel_build.py stock \
+            2>&1 | tee ace6_diagnostics/stock.log
+          test -s ace6_diagnostics/stock.symvers
+          test -s ace6_diagnostics/stock.config
+      - name: Build SukiSU builtin with real KPM and SUSFS, compare stock source ABI
+        run: |
+          set -euo pipefail
+          python3 -u scripts/ace6_plq110_kernel_build.py custom \
+            2>&1 | tee ace6_diagnostics/custom.log
+          test -s ace6_dist/Image
+          test -s ace6_diagnostics/abi-check.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          a=json.loads(Path('ace6_diagnostics/abi-check.json').read_text())
+          b=json.loads(Path('ace6_diagnostics/custom-build.json').read_text())
+          assert not a['missing'] and not a['changed'], "Source ABI changed"
+          assert b['KPM']=='Enabled' and b['SUSFS']=='Enabled'
+          assert b['OEM_scheduler_config_preserved'] is True
+          assert b['ota_live_module_abi']=='UNVERIFIED'
+          print('PASS: stock source ABI and actual compiled KPM/SUSFS config')
+          PY
+      - name: Package OnePlus Ace 6 only AnyKernel3 ZIP, no automatic reboot
+        run: |
+          set -euo pipefail
+          AK3="$GITHUB_WORKSPACE/ace6_ak3"
+          mkdir -p "$AK3"
+          git -C "$AK3" init -q
+          git -C "$AK3" remote add origin https://github.com/osm0sis/AnyKernel3.git
+          git -C "$AK3" fetch -q --depth=1 origin 020dfeccf9d7e962a48400fc94d3e451df92eead
+          git -C "$AK3" checkout -q --detach FETCH_HEAD
+          test "$(git -C "$AK3" rev-parse HEAD)" = 020dfeccf9d7e962a48400fc94d3e451df92eead
+          rm -rf "$AK3/.git"
+          cp ace6_dist/Image "$AK3/Image"
+          cp templates/ace6_plq110_sukisu_ak3.sh "$AK3/anykernel.sh"
+          cp ace6_diagnostics/custom-build.json "$AK3/build-info.json"
+          cp ace6_diagnostics/abi-check.json "$AK3/source-abi-check.json"
+          cp ace6_diagnostics/custom-release.json "$AK3/release-check.json"
+          sha256sum "$AK3/Image" | awk '{print $1 "  Image"}' > "$AK3/Image.sha256"
+          chmod 755 "$AK3/anykernel.sh"
+          sh -n "$AK3/anykernel.sh"
+          test -s "$AK3/tools/ak3-core.sh"
+          test -s "$AK3/META-INF/com/google/android/update-binary"
+          ZIP="Ace6_PLQ110_ColorOS16_6.6.118_SukiSU_SUSFS_KPM_UNTESTED_run$GITHUB_RUN_ID.zip"
+          (cd "$AK3" && zip -qr "$GITHUB_WORKSPACE/$ZIP" . -x '.git/*')
+          unzip -t "$ZIP" | tail -n 2
+          ZIP="$ZIP" python3 - <<'PY'
+          import os,json,zipfile,hashlib
+          name=os.environ['ZIP']
+          with zipfile.ZipFile(name) as z:
+              assert z.testzip() is None, "Invalid ZIP CRC"
+              required={'Image','anykernel.sh','tools/ak3-core.sh',
+                       'META-INF/com/google/android/update-binary',
+                       'build-info.json','source-abi-check.json','Image.sha256'}
+              assert required <= set(z.namelist()), "AK3 files absent"
+              data=z.read('Image')
+              digest=hashlib.sha256(data).hexdigest()
+              inner=z.read('Image.sha256').decode().split()[0]
+              assert digest == inner
+              script=z.read('anykernel.sh').decode('utf-8')
+              for phrase in ('PLQ110_16.0.10.500','SUSFS: Enabled','KPM: Enabled',
+                             '作者：闲心中都是莫','split_boot','flash_boot','SRC_SHA','BAK_SHA'):
+                  assert phrase in script, "Missing installer requirement: "+phrase
+              assert not any(line.strip().startswith(('reboot ','reboot;','su -c reboot'))
+                             for line in script.splitlines()), "Installer attempts automatic restart"
+              m=json.loads(z.read('build-info.json'))
+              assert m['KPM']=='Enabled' and m['SUSFS']=='Enabled'
+              assert m['ota_live_module_abi']=='UNVERIFIED'
+              print('PASS: verified AK3 CRC, image SHA, author, no-auto-reboot, firmware guard')
+          print('ZIP SHA256:', hashlib.sha256(open(name,'rb').read()).hexdigest())
+          PY
+          sha256sum "$ZIP" > "$ZIP.sha256"
+          echo "FINAL_ZIP=$ZIP" >> "$GITHUB_ENV"
+      - name: Upload kernel trial only after full compile and checks
+        uses: actions/upload-artifact@v4
+        with:
+          name: Ace6-PLQ110-ColorOS16-SukiSU-SUSFS-KPM-UNTESTED-${{ github.run_id }}
+          path: |
+            ${{ env.FINAL_ZIP }}
+            ${{ env.FINAL_ZIP }}.sha256
+          if-no-files-found: error
+          retention-days: 15
+          compression-level: 0
+      - name: Preserve source, toolchain and build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Ace6-PLQ110-Kernel-Build-Diagnostics-${{ github.run_id }}
+          path: ace6_diagnostics/
+          if-no-files-found: warn
+          retention-days: 25
+          compression-level: 6
