@@ -6,6 +6,7 @@ on:
     branches: [ace6-plq110-16010500-sukisu-20261016]
     paths:
       - .github/workflows/ace6-plq110-official-susfs-source-preflight.yml
+      - scripts/ace6_plq110_susfs_rebase.py
 permissions:
   contents: read
 concurrency:
@@ -53,7 +54,7 @@ jobs:
           test -s common/arch/arm64/configs/gki_defconfig
           grep -qxF 'CLANG_VERSION=r510928' common/build.config.constants
           echo 'Official Ace6 source is 6.6.118 (PLQ110_16.0.9.401) with Clang r510928' >> ace6-evidence/source-check.txt
-      - name: Strict SUSFS 6.6 patch dry run before changing any source
+      - name: Strict pinned SUSFS 6.6 rebase with GNU patch zero fuzz before changes
         run: |
           set -euo pipefail
           git clone --quiet --filter=blob:none --single-branch --depth=1 \
@@ -61,7 +62,15 @@ jobs:
           test "$(git -C susfs rev-parse HEAD)" = 3f6aae536724af0df3dfa15f932034d14a5dbc5c
           PATCH="$GITHUB_WORKSPACE/susfs/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch"
           test -s "$PATCH"
-          if ! (cd common && patch --batch --fuzz=0 --forward --dry-run -p1 < "$PATCH") \
+          python3 -m py_compile scripts/ace6_plq110_susfs_rebase.py
+          python3 scripts/ace6_plq110_susfs_rebase.py selftest
+          python3 scripts/ace6_plq110_susfs_rebase.py apply \
+            "$PATCH" "$GITHUB_WORKSPACE/common" \
+            "$GITHUB_WORKSPACE/ace6-evidence/ace6-susfs-verified-rebase.patch"
+          test -s ace6-evidence/ace6-susfs-verified-rebase.patch
+          sha256sum ace6-evidence/ace6-susfs-verified-rebase.patch > ace6-evidence/susfs-patch.sha256
+          if ! (cd common && patch --batch --fuzz=0 --forward --dry-run -p1 \
+               < "$GITHUB_WORKSPACE/ace6-evidence/ace6-susfs-verified-rebase.patch") \
              > ace6-evidence/patch-dryrun.txt 2>&1; then
             tail -n 130 ace6-evidence/patch-dryrun.txt
             echo "::error::Official Ace6 6.6.118 source is NOT an exact match for pinned SUSFS patch."
