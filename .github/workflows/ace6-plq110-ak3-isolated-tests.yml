@@ -1,0 +1,32 @@
+name: Ace6 PLQ110 AK3 isolated firmware and ABI checks
+run-name: Ace6-PLQ110-AK3-isolated-tests-${{ github.run_id }}
+on:
+  workflow_dispatch:
+  push:
+    branches: [ace6-plq110-16010500-sukisu-20261016]
+    paths:
+      - .github/workflows/ace6-plq110-ak3-isolated-tests.yml
+      - scripts/test_ace6_plq110_ak3.py
+      - templates/ace6-plq110-sukisu-kpm-susfs-anykernel.sh
+permissions:
+  contents: read
+jobs:
+  installer-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check Python and POSIX shell
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/test_ace6_plq110_ak3.py
+          sh -n templates/ace6-plq110-sukisu-kpm-susfs-anykernel.sh
+      - name: Mock wrong-model, wrong-ROM, unverified ABI and no-reboot cases
+        run: |
+          set -euo pipefail
+          python3 scripts/test_ace6_plq110_ak3.py
+      - name: Report isolated scope
+        run: |
+          echo 'PASS: static AnyKernel3 installer and synthetic cases only.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Real-device boot, vendor modules and WiFi/Bluetooth remain UNTESTED.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'No kernel or flashable ZIP produced in this job.' >> "$GITHUB_STEP_SUMMARY"
