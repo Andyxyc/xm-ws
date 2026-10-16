@@ -47,8 +47,8 @@ if [ -f "$_ace6_rej" ]; then
   grep -Fq 'int ksu_handle_execveat_ksud(int *fd, struct filename **filename_ptr,' kernel/runtime/ksud.h || {
     echo "::error::SUSFS dispatcher prototype missing"; exit 1;
   }
-  grep -Fq 'ksu_handle_execveat_ksud(fd, filename_ptr, argv, envp, flags)' kernel/supercall/dispatch.c || {
-    echo "::error::SUSFS dispatcher callsite missing"; exit 1;
+  grep -Fq 'ksu_handle_execveat_ksud(fd, filename_ptr, argv, envp, flags)' kernel/feature/sucompat.c || {
+    echo "::error::SUSFS sucompat dispatcher callsite missing"; exit 1;
   }
   python3 "$GITHUB_WORKSPACE/ace6-patches/scripts/ace6_susfs_v421_abi_bridge.py" --apply "$_ace6_target"
   if grep -Eq '^\+[^+].*(susfs_|CONFIG_KSU_SUSFS)' "$_ace6_rej"; then
