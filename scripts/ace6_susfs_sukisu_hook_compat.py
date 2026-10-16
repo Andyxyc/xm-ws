@@ -15,16 +15,16 @@ from pathlib import Path
 COUNTS = (
     ("+extern struct static_key_true ksu_su_compat_enabled;",
      "+extern bool ksu_su_compat_enabled;", 3),
-    ("+static_branch_likely(&ksu_su_compat_enabled)",
-     "+READ_ONCE(ksu_su_compat_enabled)", 3),
+    ("+\tif (static_branch_likely(&ksu_su_compat_enabled))",
+     "+\tif (READ_ONCE(ksu_su_compat_enabled))", 3),
     ("+extern struct static_key_true ksu_is_init_rc_hook_enabled;",
      "+extern bool ksu_vfs_read_hook;", 2),
-    ("+static_branch_unlikely(&ksu_is_init_rc_hook_enabled)",
-     "+READ_ONCE(ksu_vfs_read_hook)", 2),
+    ("+\tif (static_branch_unlikely(&ksu_is_init_rc_hook_enabled))",
+     "+\tif (READ_ONCE(ksu_vfs_read_hook))", 2),
     ("+extern struct static_key_true ksu_is_input_hook_enabled;",
      "+extern bool ksu_input_hook;", 1),
-    ("+static_branch_unlikely(&ksu_is_input_hook_enabled)",
-     "+READ_ONCE(ksu_input_hook)", 1),
+    ("+\tif (static_branch_unlikely(&ksu_is_input_hook_enabled))",
+     "+\tif (READ_ONCE(ksu_input_hook))", 1),
 )
 
 def adjust(text: str) -> str:
