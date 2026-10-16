@@ -28,8 +28,8 @@ def transform(allow: str, ksud: str, sulog: str) -> tuple[str, str, str]:
         "#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)\n" + call1 +
         "\n#endif /* SELinux hiding implementation exists only for Linux >=5.10 */", 1
     )
-    call2 = "                ksu_selinux_hide_handle_second_stage();"
-    call3 = "            ksu_selinux_hide_handle_second_stage();"
+    call2 = "\n                ksu_selinux_hide_handle_second_stage();\n"
+    call3 = "\n            ksu_selinux_hide_handle_second_stage();\n"
     for call in (call2, call3):
         ksud = exact(
             ksud, call,
