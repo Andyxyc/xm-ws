@@ -1,0 +1,78 @@
+name: Redmi K40 Gaming ares HyperOS1 kernel source preflight
+run-name: ares-4.14.186-SukiSU-SUSFS-KPM-preflight-${{ github.run_id }}
+on:
+  push:
+    branches: [k40-gaming-ares-hyperos1-20261016]
+    paths:
+      - .github/workflows/ares-hyperos1-source-preflight.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ares-hyperos1-susfs-source-preflight
+  cancel-in-progress: false
+jobs:
+  verify-ares-sources:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check official Redmi K40 Gaming ares source identity
+        run: |
+          set -euo pipefail
+          mkdir -p ares-evidence
+          git clone --quiet --single-branch --branch ares-r-oss --depth=1 --filter=blob:none \
+            https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git ares-kernel
+          test "$(git -C ares-kernel rev-parse HEAD)" = "49c02c2de185e3e93951fdad6c4dd9caf453523a"
+          for x in "VERSION = 4" "PATCHLEVEL = 14" "SUBLEVEL = 186"; do
+            grep -qx "$x" ares-kernel/Makefile || { echo "::error::Wrong kernel baseline $x"; exit 40; }
+          done
+          test -s ares-kernel/arch/arm64/configs/ares_user_defconfig
+          grep -qF 'CONFIG_MTK_PLATFORM=' ares-kernel/arch/arm64/configs/ares_user_defconfig
+          echo 'KERNEL_REPO=MiCode/Xiaomi_Kernel_OpenSource' > ares-evidence/identity.txt
+          echo 'KERNEL_BRANCH=ares-r-oss' >> ares-evidence/identity.txt
+          echo 'KERNEL_COMMIT=49c02c2de185e3e93951fdad6c4dd9caf453523a' >> ares-evidence/identity.txt
+          echo 'BASE_VERSION=4.14.186' >> ares-evidence/identity.txt
+          echo 'TARGET_HARDWARE=ares_mt6893' >> ares-evidence/identity.txt
+          echo 'TARGET_OS=HyperOS_1_Android_13' >> ares-evidence/identity.txt
+          echo 'LIVE_ROM_BUILD_NOT_OBTAINED=true' >> ares-evidence/identity.txt
+      - name: Probe pinned SUSFS Linux4.14 patch zero-fuzz compatibility
+        run: |
+          set -euo pipefail
+          git clone --quiet --single-branch --branch kernel-4.14 --depth=1 \
+            https://github.com/ShirkNeko/susfs4ksu.git susfs-414
+          test "$(git -C susfs-414 rev-parse HEAD)" = "e64d39431693fd1fa44331cbec4bf32a6cd302d8"
+          test -s susfs-414/kernel_patches/50_add_susfs_in_kernel-4.14.patch
+          if ! (cd ares-kernel && patch --batch --forward --fuzz=0 --dry-run -p1 \
+               < ../susfs-414/kernel_patches/50_add_susfs_in_kernel-4.14.patch) \
+               > ares-evidence/susfs4.14-dryrun.txt 2>&1; then
+            tail -n 100 ares-evidence/susfs4.14-dryrun.txt
+            echo "::error::Stock ares kernel and selected SUSFS4.14 patch do not match; abort integration."
+            exit 41
+          fi
+          echo "SUSFS_PATCH_ZERO_FUZZ=PASS" >> ares-evidence/identity.txt
+      - name: Check latest pinned SukiSU builtin kernel integration and KPM
+        run: |
+          set -euo pipefail
+          git clone --quiet --single-branch --branch builtin --depth=1 \
+            https://github.com/SukiSU-Ultra/SukiSU-Ultra.git SukiSU
+          test "$(git -C SukiSU rev-parse HEAD)" = "c95d6e2c76adb11b0e438e518e32ac4e31f5b1d0"
+          grep -q 'config KPM' SukiSU/kernel/Kconfig
+          grep -q 'config KSU_SUSFS' SukiSU/kernel/Kconfig
+          grep -q 'config KSU_SUSFS_SUS_KSTAT' SukiSU/kernel/Kconfig
+          grep -q 'KSU_IOCTL_KPM' SukiSU/kernel/include/uapi/supercall.h
+          echo 'SUKISU_BUILTIN_COMMIT=c95d6e2c76adb11b0e438e518e32ac4e31f5b1d0' >> ares-evidence/identity.txt
+          echo 'SUKISU_KPM_SOURCE=present' >> ares-evidence/identity.txt
+          echo 'SUKISU_SUSFS_KCONFIG=present' >> ares-evidence/identity.txt
+          echo 'KERNEL_COMPILE=not_performed' >> ares-evidence/identity.txt
+          echo 'BOOT_WIFI_BLUETOOTH=not_tested' >> ares-evidence/identity.txt
+      - name: Save diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: RedmiK40Gaming-ares-susfs414-preflight-${{ github.run_id }}
+          path: ares-evidence/
+          if-no-files-found: warn
+          retention-days: 14
