@@ -34,7 +34,7 @@ def transform(allow: str, ksud: str, sulog: str) -> tuple[str, str, str]:
         ksud = exact(
             ksud, call,
             "#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)\n" + call +
-            "\n#endif /* Keep second-stage root setup; only gate absent Linux 4.19 helper */",
+            "\n#endif /* Keep second-stage root setup; only gate absent Linux 4.19 helper */\n",
             1
         )
     # Both SUSFS and non-SUSFS branches should compile without an invalid
