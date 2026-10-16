@@ -1,0 +1,35 @@
+name: Cancel wrong-device Redmi K40 alioth jobs
+run-name: Cancel-alioth-not-ares-${{ github.run_id }}
+on:
+  push:
+    branches: [k40-hyperos1-sukisu-kpm-susfs-20261016]
+    paths:
+      - .github/workflows/k40-alioth-cancel-after-device-correction.yml
+  workflow_dispatch:
+permissions:
+  actions: write
+  contents: read
+jobs:
+  stop-wrong-soc:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Cancel only identified wrong alioth build run IDs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for RUN in 38895170773 38895196778; do
+            info="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN")"
+            name="$(printf '%s' "$info" | jq -r '.name')"
+            branch="$(printf '%s' "$info" | jq -r '.head_branch')"
+            status="$(printf '%s' "$info" | jq -r '.status')"
+            case "$name" in K40-alioth-4.19.325-*) ;; *) echo "::error::Wrong target name"; exit 40 ;; esac
+            test "$branch" = k40-hyperos1-sukisu-kpm-susfs-20261016 || { echo "::error::Unexpected source branch"; exit 41; }
+            if [ "$status" = completed ]; then
+              echo "$RUN completed ($name); do not use its wrong-model artifacts"
+            else
+              gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$RUN/cancel"
+              echo "Requested cancellation of wrong-model $RUN"
+            fi
+          done
