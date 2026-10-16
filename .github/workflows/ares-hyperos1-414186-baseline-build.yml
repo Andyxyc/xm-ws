@@ -1,0 +1,86 @@
+name: Redmi K40 Gaming HyperOS1 Linux4.14.186 Stock Baseline
+run-name: ares-414186-stock-vendor-config-kernel-baseline-${{ github.run_id }}
+on:
+  workflow_dispatch:
+  push:
+    branches: [k40gaming-ares-hyperos1-414186-20261016]
+    paths:
+      - .github/workflows/ares-hyperos1-414186-baseline-build.yml
+permissions:
+  contents: read
+concurrency:
+  group: ares-hyperos1-414186-stock-reference
+  cancel-in-progress: false
+jobs:
+  stock-reference:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 95
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux4.14 compiler and verify executables
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            clang-15 lld-15 llvm-15 make gcc g++ bc bison flex libssl-dev libelf-dev \
+            git patch python3 zip unzip xz-utils zstd cpio \
+            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
+          mkdir -p "$GITHUB_WORKSPACE/llvm-tools"
+          for b in llvm-ar llvm-nm llvm-objdump llvm-objcopy llvm-strip llvm-readelf llvm-ranlib llvm-size llvm-addr2line; do
+            found="$(command -v "$b-15" || true)"
+            [ -n "$found" ] && [ -x "$found" ] || { echo "::error::Missing $b-15"; exit 37; }
+            ln -s "$found" "$GITHUB_WORKSPACE/llvm-tools/$b"
+          done
+          echo "$GITHUB_WORKSPACE/llvm-tools" >> "$GITHUB_PATH"
+          clang-15 --version | head -n 1
+          ld.lld-15 --version | head -n 1
+      - name: Retrieve verified Ares Android13 4.14.186 source
+        run: |
+          set -euo pipefail
+          git clone --quiet --single-branch --branch T --depth=1 --filter=blob:none \
+            https://github.com/Tkpointz/android_kernel_aresin.git ares-source
+          test "$(git -C ares-source rev-parse HEAD)" = d7da62641a6b27411a7f4afeb0e4686fc3b9ce34
+          grep -qx 'VERSION = 4' ares-source/Makefile
+          grep -qx 'PATCHLEVEL = 14' ares-source/Makefile
+          grep -qx 'SUBLEVEL = 186' ares-source/Makefile
+          grep -qF 'CONFIG_ARCH_MTK_PROJECT="k6893v1_64"' ares-source/arch/arm64/configs/ares_user_defconfig
+      - name: Produce unmodified vendor ares stocklike kernel .config
+        run: |
+          set -euo pipefail
+          mkdir -p ares-baseline-evidence
+          cd ares-source
+          make O=out ARCH=arm64 HOSTCC=clang-15 CC=clang-15 LD=ld.lld-15 \
+             LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- \
+             CROSS_COMPILE_ARM32=arm-linux-gnueabi- ares_user_defconfig
+          test -s out/.config
+          cp out/.config "$GITHUB_WORKSPACE/ares-baseline-evidence/stock.config"
+          test ! -L drivers/kernelsu || { echo "::error::Unexpected inherited root hooks in stock source"; exit 41; }
+          grep -qF 'CONFIG_ARCH_MTK_PROJECT="k6893v1_64"' out/.config
+          echo 'Stock Ares 4.14.186 configuration generated' >> "$GITHUB_STEP_SUMMARY"
+      - name: Compile stocklike Android13 Ares kernel and record module ABI
+        run: |
+          set -euo pipefail
+          cd ares-source
+          set -o pipefail
+          make -j3 O=out ARCH=arm64 HOSTCC=clang-15 CC=clang-15 LD=ld.lld-15 \
+             LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- \
+             CROSS_COMPILE_ARM32=arm-linux-gnueabi- Image.gz vmlinux \
+             2>&1 | tee "$GITHUB_WORKSPACE/ares-baseline-evidence/kernel-compile.log"
+          test -s out/arch/arm64/boot/Image.gz
+          test -s out/vmlinux
+          sha256sum out/arch/arm64/boot/Image.gz > "$GITHUB_WORKSPACE/ares-baseline-evidence/stock-image.sha256"
+          test -s out/Module.symvers
+          cp out/Module.symvers "$GITHUB_WORKSPACE/ares-baseline-evidence/stock-Module.symvers"
+          test "$(stat -c %s out/arch/arm64/boot/Image.gz)" -gt 5000000
+          strings -a out/vmlinux | grep -m1 'Linux version 4.14.186' || {
+            echo "::error::Actual source did not compile to 4.14.186"; exit 43;
+          }
+          echo 'Stocklike source baseline compiled; real firmware boot ABI still unverified.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve baseline build diagnostics even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: RedmiK40Gaming-ares-414186-stock-baseline-${{ github.run_id }}
+          path: ares-baseline-evidence/
+          if-no-files-found: warn
+          retention-days: 14
