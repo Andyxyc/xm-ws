@@ -51,7 +51,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m py_compile ace6-patches/scripts/ace6_susfs_v421_compat.py
+          python3 -m py_compile ace6-patches/scripts/ace6_susfs_v421_compat.py ace6-patches/scripts/ace6_susfs_v421_abi_bridge.py
+          python3 ace6-patches/scripts/ace6_susfs_v421_abi_bridge.py --selftest
           python3 ace6-patches/scripts/ace6_susfs_v421_compat.py --selftest
           python3 ace6-patches/scripts/ace6_susfs_v421_compat.py --apply configs/apply_susfs_patches.sh
           bash -n configs/apply_susfs_patches.sh
