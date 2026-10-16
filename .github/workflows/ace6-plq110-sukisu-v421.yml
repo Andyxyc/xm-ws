@@ -23,6 +23,14 @@ jobs:
     env:
       # One device: permit upstream's direct-download toolchain fallback on mirror miss.
       OP_TOTAL_DEVICES: '1'
+      # Required even for a clean build: the upstream composite action probes both.
+      CCACHE_DIR: ${{ github.workspace }}/.ccache_ace6
+      LDCACHE_DIR: ${{ github.workspace }}/.ld_cache_ace6
+      CCACHE_MAXSIZE: 10G
+      CCACHE_COMPILERCHECK: content
+      CCACHE_NOHASHDIR: 'true'
+      CCACHE_IS_KERNEL_COMPILING: 'true'
+      OP_SPOOF_UNAME: 'false'
     steps:
       - name: Checkout reviewed OnePlus build pipeline
         uses: actions/checkout@v4
@@ -77,6 +85,8 @@ jobs:
             libelf-dev libssl-dev libncurses-dev zlib1g-dev liblz4-tool \
             libxml2-utils rsync unzip dwarves file python3 ccache jq bc \
             dos2unix kmod libdw-dev elfutils pigz aria2
+          mkdir -p "$CCACHE_DIR" "$LDCACHE_DIR"
+          ccache --max-size=10G
           df -h "$GITHUB_WORKSPACE"
 
       - name: Compile SukiSU + SUSFS into real Image and AK3
