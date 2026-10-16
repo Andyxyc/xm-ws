@@ -1,0 +1,32 @@
+name: Stop mismatched alioth K40 build
+run-name: Stop-wrong-alioth-run-${{ github.run_id }}
+on:
+  push:
+    branches: [k40-gaming-ares-hyperos1-20261016]
+    paths:
+      - .github/workflows/k40-ares-stop-alioth-wrong-build.yml
+  workflow_dispatch:
+permissions:
+  actions: write
+  contents: read
+jobs:
+  cancel-wrong-target:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Cancel specific wrong-model alioth build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          RUN=38894429907
+          info="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN")"
+          name="$(printf '%s' "$info" | jq -r '.name')"
+          status="$(printf '%s' "$info" | jq -r '.status')"
+          case "$name" in K40-alioth-4.19.325-*) ;; *) echo "::error::Unexpected run, refusing cancel"; exit 40;; esac
+          if [ "$status" = completed ]; then
+            echo "Wrong-model build already finished; never use any artifact from this run."
+            exit 0
+          fi
+          gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$RUN/cancel"
+          echo "Cancellation requested for wrong alioth run $RUN."
