@@ -88,6 +88,7 @@ def test_wrappers(original, edited, results):
 #include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
+typedef uint32_t u32;
 #define EBADF 9
 #define EINVAL 22
 #define KSTAT_QUERY_FLAGS 0x6000U
