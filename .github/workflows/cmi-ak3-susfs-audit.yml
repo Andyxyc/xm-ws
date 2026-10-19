@@ -1,0 +1,80 @@
+name: CMI SUSFS experimental AK3 audit
+on:
+  push:
+    branches: [cmi-miui12510-driver-build-20261019]
+    paths:
+      - ci/cmi/ak3-susfs-audit.py
+      - .github/workflows/cmi-ak3-susfs-audit.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  audit:
+    name: 小米10Pro SukiSU及SUSFS实验版AK3独立封装
+    if: github.ref == 'refs/heads/cmi-miui12510-driver-build-20261019'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: 恢复已通过的SUSFS整核实验产物与锁定的AK3
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p susfs-artifact susfs-ak3-results
+          curl -fL --retry 2 --connect-timeout 20 --max-time 240 \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            'https://api.github.com/repos/Andyxyc/xm-ws/actions/artifacts/12221261211/zip' \
+            -o "$RUNNER_TEMP/susfs-artifact.zip"
+          printf '%s  %s\n' \
+            c013f2aa29989d3b71cbb20e3bfcd3a24456423aa7d1c1ff194fb6f450cfbab9 \
+            "$RUNNER_TEMP/susfs-artifact.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/susfs-artifact.zip" -d susfs-artifact
+          git init -q "$RUNNER_TEMP/ak3-source"
+          git -C "$RUNNER_TEMP/ak3-source" fetch --depth=1 -q https://github.com/osm0sis/AnyKernel3.git \
+            020dfeccf9d7e962a48400fc94d3e451df92eead
+          git -C "$RUNNER_TEMP/ak3-source" checkout -q --detach FETCH_HEAD
+          test "$(git -C "$RUNNER_TEMP/ak3-source" rev-parse HEAD)" = 020dfeccf9d7e962a48400fc94d3e451df92eead
+      - name: 验证实际SUSFS内核并制作禁止刷写版本
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile ci/cmi/ak3-susfs-audit.py
+          python3 ci/cmi/ak3-susfs-audit.py \
+            "$GITHUB_WORKSPACE/susfs-artifact" \
+            "$RUNNER_TEMP/ak3-source" \
+            "$GITHUB_WORKSPACE/susfs-ak3-results"
+          test -s susfs-ak3-results/CMI-SukiSU41023-SUSFS155-MIUI12510-AK3-AUDIT-NOFLASH.zip
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          root=Path("susfs-ak3-results")
+          report=json.loads((root/"AUDIT-RESULT.json").read_text())
+          assert report["AK3_guard_checks"]==2
+          assert report["flashable"] is False
+          assert report["zip_integrity"]=="passed"
+          PY
+          (cd susfs-ak3-results; sha256sum *.zip > SHA256SUMS)
+      - name: 保存程序及实际测试记录
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p susfs-ak3-results
+          cp ci/cmi/ak3-susfs-audit.py susfs-ak3-results/
+          printf 'SUSFS 1.5.5 experimental source; actual mobile boot and control protocol unverified. Not flashable.\n' \
+            > susfs-ak3-results/NOT_FLASHABLE.txt
+      - name: 上传带SUSFS版本及核验
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cmi-susfs-ak3-audit-${{ github.run_id }}
+          path: susfs-ak3-results/
+          retention-days: 7
+          compression-level: 1
+          if-no-files-found: error
