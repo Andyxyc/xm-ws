@@ -89,6 +89,15 @@ s=s.replace('WLAN_PROFILE := default','WLAN_PROFILE := qca6390')
 p.write_text(s)
 p=k/'drivers/staging/Makefile';s=p.read_text();assert 'qcacld-3.0/' not in s;p.write_text(s+'\nobj-$(CONFIG_QCA_CLD_WLAN) += qcacld-3.0/\n')
 p=k/'drivers/staging/Kconfig';s=p.read_text();assert 'qcacld-3.0/Kconfig' not in s;assert s.count('endif # STAGING')==1
+# MiCode leaves references to two unprovided optional vendor components.
+# The cmi_user_defconfig selects neither. Do not create fake implementations.
+defcfg=(k/'arch/arm64/configs/cmi_user_defconfig').read_text()
+for name,symbol in [('misysinfofreader','MISYSINFOFREADER'),('kperfevents','KPERFEVENTS')]:
+    assert not re.search(r'^CONFIG_'+symbol+r'=[ym]$',defcfg,re.M)
+    reference='source "drivers/staging/'+name+'/Kconfig"'
+    assert s.count(reference)==1
+    assert not (k/'drivers/staging'/name/'Kconfig').exists()
+    s=s.replace(reference,'# Optional '+symbol+' source is not supplied and is not selected for cmi.')
 p.write_text(s.replace('endif # STAGING','source "drivers/staging/qcacld-3.0/Kconfig"\n\nendif # STAGING'))
 p=k/'techpack/camera';assert not p.exists() and not p.is_symlink();p.symlink_to('camera-dxo')
 for name in ['kperfevents.h','misysinfofreader.h']:
@@ -96,19 +105,18 @@ for name in ['kperfevents.h','misysinfofreader.h']:
     if p.is_symlink():p.unlink()
     if not p.exists():p.symlink_to('../dum/'+name)
     assert p.is_file(),str(p)
-(pathlib.Path(os.environ['GITHUB_WORKSPACE'])/'driver-results/source-assembly.json').write_text(json.dumps({'audio_config_m_to_y':41,'wlan_profile':'qca6390','absolute_links_repaired':repairs,'sukisu_included':False,'phone_write':False},indent=2))
+(pathlib.Path(os.environ['GITHUB_WORKSPACE'])/'driver-results/source-assembly.json').write_text(json.dumps({'audio_config_m_to_y':41,'wlan_profile':'qca6390','absolute_links_repaired':repairs,'unavailable_unselected_components':['MISYSINFOFREADER','KPERFEVENTS'],'sukisu_included':False,'phone_write':False},indent=2))
 PY
 export ARCH=arm64 TARGET_PRODUCT=cmi TARGET_BUILD_VARIANT=user
 export KBUILD_BUILD_USER=xiaomo KBUILD_BUILD_HOST=cmi-github
 MAKE=(make -C "$WORK/kernel" O="$WORK/out" ARCH=arm64 TARGET_PRODUCT=cmi TARGET_BUILD_VARIANT=user CC=clang HOSTCC=clang HOSTCXX=clang++ CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-androidkernel- CROSS_COMPILE_ARM32=arm-linux-androideabi- LD=aarch64-linux-androidkernel-ld NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump -j4)
 "${MAKE[@]}" cmi_user_defconfig
-# Keep module version checking and stock hardware selection. The existing
-# SukiSU source is built separately while this isolates the driver changes.
 "$WORK/kernel/scripts/config" --file "$WORK/out/.config" -e QCA_CLD_WLAN
 "${MAKE[@]}" olddefconfig
 cp "$WORK/out/.config" "$ROOT/driver-results/kernel.config"
 grep -x CONFIG_QCA_CLD_WLAN=y "$WORK/out/.config"
 grep -x CONFIG_MODVERSIONS=y "$WORK/out/.config"
+if grep -Eq '^CONFIG_(MISYSINFOFREADER|KPERFEVENTS)=[ym]$' "$WORK/out/.config"; then exit 2; fi
 "${MAKE[@]}" Image.gz
 for n in Image Image.gz; do
   test -s "$WORK/out/arch/arm64/boot/$n"
