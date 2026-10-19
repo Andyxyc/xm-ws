@@ -1,0 +1,49 @@
+--- a/drivers/staging/qca-wifi-host-cmn/dp/wifi3.0/dp_rx.h
++++ b/drivers/staging/qca-wifi-host-cmn/dp/wifi3.0/dp_rx.h
+@@ -686,7 +686,7 @@
+ void dp_rx_deliver_raw(struct dp_vdev *vdev, qdf_nbuf_t nbuf_list,
+ 				struct dp_peer *peer);
+ 
+-#ifdef RX_DESC_DEBUG_CHECK
++/* The RX error path uses this check in release builds as well. */
+ /**
+  * dp_rx_desc_paddr_sanity_check() - paddr sanity for ring desc vs rx_desc
+  * @rx_desc: rx descriptor
+@@ -701,6 +701,7 @@
+ 	return (ring_paddr == qdf_nbuf_get_frag_paddr(rx_desc->nbuf, 0));
+ }
+ 
++#ifdef RX_DESC_DEBUG_CHECK
+ /*
+  * dp_rx_desc_alloc_dbg_info() - Alloc memory for rx descriptor debug
+  *  structure
+--- a/drivers/staging/qcacld-3.0/Kbuild
++++ b/drivers/staging/qcacld-3.0/Kbuild
+@@ -15,6 +15,7 @@
+ 	WLAN_COMMON_INC := $(WLAN_ROOT)/$(WLAN_COMMON_ROOT)
+ 	WLAN_FW_API := $(WLAN_ROOT)/../fw-api/
+ 	WLAN_PROFILE := qca6390
++	DYNAMIC_SINGLE_CHIP := qca6390
+ endif
+ 
+ WLAN_COMMON_ROOT ?= ../qca-wifi-host-cmn
+--- a/drivers/staging/qcacld-3.0/core/hdd/src/wlan_hdd_sysfs.c
++++ b/drivers/staging/qcacld-3.0/core/hdd/src/wlan_hdd_sysfs.c
+@@ -695,6 +695,9 @@
+ 	sysfs_remove_file(driver_kobject, &power_stats_attribute.attr);
+ }
+ 
++#endif /* WLAN_POWER_DEBUG */
++
++/* Root objects are also needed when power debugging is disabled. */
+ void hdd_sysfs_create_driver_root_obj(void)
+ {
+ 	driver_kobject = kobject_create_and_add(DRIVER_NAME, kernel_kobj);
+@@ -723,7 +726,6 @@
+ 		driver_kobject = NULL;
+ 	}
+ }
+-#endif
+ 
+ #ifdef WLAN_FEATURE_BEACON_RECEPTION_STATS
+ static int hdd_sysfs_create_bcn_reception_interface(struct hdd_adapter
