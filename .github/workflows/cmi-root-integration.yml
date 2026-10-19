@@ -4,6 +4,7 @@ on:
     branches: [cmi-miui12510-driver-build-20261019]
     paths:
       - ci/cmi/prepare-root-integration.py
+      - ci/cmi/apply-manual-hooks.py
       - .github/workflows/cmi-root-integration.yml
   workflow_dispatch:
 permissions:
@@ -29,14 +30,14 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends build-essential git curl unzip bc bison flex libssl-dev libelf-dev libtinfo5 libncurses5 python3 python-is-python3 cpio rsync
-      - name: 接入固定SukiSU并检查SUSFS补丁
+      - name: 接入固定SukiSU及实际内核调用点
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           CMI_HOST_SANITIZERS: address,undefined
         run: |
           set -euo pipefail
-          python3 -m py_compile ci/cmi/prepare-root-integration.py repair-cmi-wlan.py repair-cmi-sysfs.py repair-cmi-link.py
+          python3 -m py_compile ci/cmi/prepare-root-integration.py ci/cmi/apply-manual-hooks.py repair-cmi-wlan.py repair-cmi-sysfs.py repair-cmi-link.py
           python3 - <<'PY'
           from pathlib import Path
           import hashlib
@@ -52,6 +53,7 @@ jobs:
           commands += 'python3 "$ROOT/repair-cmi-sysfs.py" "$WORK/kernel" "$ROOT/driver-results"\n'
           commands += 'python3 "$ROOT/repair-cmi-link.py" apply "$WORK/kernel" "$ROOT/driver-results"\n'
           commands += 'python3 "$ROOT/ci/cmi/prepare-root-integration.py" prepare "$WORK/kernel" "$ROOT/driver-results"\n'
+          commands += 'python3 "$ROOT/ci/cmi/apply-manual-hooks.py" apply "$WORK/kernel" "$ROOT/driver-results"\n'
           source = source.replace(anchor, commands + anchor)
           anchor = '"${MAKE[@]}" olddefconfig\n'
           if source.count(anchor) != 1:
@@ -61,7 +63,6 @@ jobs:
           anchor = '"${MAKE[@]}" Image.gz\n'
           if source.count(anchor) != 1:
               raise SystemExit('Ambiguous image build boundary')
-          # Use the original Kbuild producers for all generated prerequisites.
           probe = '"${MAKE[@]}" init/version.o\n'
           probe += 'test -s "$WORK/out/include/generated/compile.h"\n'
           probe += 'cp "$WORK/out/include/generated/compile.h" "$ROOT/driver-results/compile.h"\n'
@@ -69,7 +70,7 @@ jobs:
           probe += 'test -s "$WORK/out/security/selinux/flask.h"\n'
           probe += 'test -s "$WORK/out/security/selinux/av_permissions.h"\n'
           probe += 'cp "$WORK/out/security/selinux/flask.h" "$WORK/out/security/selinux/av_permissions.h" "$ROOT/driver-results/"\n'
-          probe += '"${MAKE[@]}" drivers/kernelsu/\n'
+          probe += '"${MAKE[@]}" drivers/kernelsu/ fs/exec.o fs/open.o fs/stat.o fs/read_write.o kernel/reboot.o\n'
           source = source.replace(anchor, probe + anchor)
           source = source.replace('cmi-driver-baseline', 'cmi-root-integration')
           source = source.replace('driver baseline. Not flashable.', 'SukiSU integration stage. Not flashable.')
@@ -78,25 +79,29 @@ jobs:
           PY
           bash -n build-cmi-root.generated.sh
           bash build-cmi-root.generated.sh
-      - name: 核验整核链接与SukiSU真实目标
+      - name: 核验整核链接与真实调用点
         shell: bash
         run: |
           set -euo pipefail
           python3 repair-cmi-link.py verify "$RUNNER_TEMP/cmi-root-integration/out" "$GITHUB_WORKSPACE/driver-results"
           python3 ci/cmi/prepare-root-integration.py verify "$RUNNER_TEMP/cmi-root-integration/out" "$GITHUB_WORKSPACE/driver-results"
+          python3 ci/cmi/apply-manual-hooks.py verify "$RUNNER_TEMP/cmi-root-integration/out" "$GITHUB_WORKSPACE/driver-results"
           python3 - <<'PY'
           import json
           from pathlib import Path
           root = Path('driver-results')
           evidence = json.loads((root / 'root-integration.json').read_text())
-          if evidence.get('sukisu_full_link') != 'passed':
-              raise SystemExit('Missing verified SukiSU link evidence')
+          hooks = json.loads((root / 'manual-hooks-result.json').read_text())
+          if evidence.get('sukisu_full_link') != 'passed' or hooks.get('final_link') != 'passed':
+              raise SystemExit('Missing verified SukiSU link or hook evidence')
           report = root / 'kernel-link-verification.json'
           data = json.loads(report.read_text())
           data['sukisu_included'] = True
           data['susfs_included'] = False
           data['root_inclusion_evidence'] = 'root-integration.json'
+          data['manual_hook_evidence'] = 'manual-hooks-result.json'
           report.write_text(json.dumps(data, indent=2) + '\n')
+          (root / 'NOT_FLASHABLE.txt').write_text('SukiSU with compiled manual hooks; SUSFS runtime integration and phone boot remain unverified.\nNot an AK3 package. Do not flash this artifact.\n')
           PY
       - name: 保留准确阶段及诊断
         if: always()
@@ -104,7 +109,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p driver-results
-          cp ci/cmi/prepare-root-integration.py driver-results/
+          cp ci/cmi/prepare-root-integration.py ci/cmi/apply-manual-hooks.py driver-results/
           if test -f build-cmi-root.generated.sh; then cp build-cmi-root.generated.sh driver-results/; fi
           python3 - <<'PY'
           import os
@@ -120,12 +125,13 @@ jobs:
           if applicability.exists():
               print('SUSFS upstream patch applicability:')
               print(applicability.read_text())
-          report = root / 'root-integration.json'
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out:
               out.write('### 小米10Pro Root整合阶段\n\n')
-              out.write('本轮先检查SukiSU在4.19上的编译与链接，SUSFS旧接口桥接和实机启动仍须单独验证。不是可刷AK3。\n\n')
-              if report.exists():
-                  out.write('```json\n' + report.read_text() + '\n```\n')
+              out.write('检查SukiSU及实际内核调用点的编译和链接；SUSFS旧接口桥接和实机启动仍须验证。不是可刷AK3。\n\n')
+              for name in ('root-integration.json', 'manual-hooks-result.json'):
+                  report = root / name
+                  if report.exists():
+                      out.write('```json\n' + report.read_text() + '\n```\n')
               out.write('```text\n' + '\n'.join(errors[-40:]) + '\n```\n')
           PY
       - name: 上传源码检查及真实产物
