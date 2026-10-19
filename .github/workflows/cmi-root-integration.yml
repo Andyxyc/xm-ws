@@ -1,0 +1,112 @@
+name: CMI SukiSU integration
+on:
+  push:
+    branches: [cmi-miui12510-driver-build-20261019]
+    paths:
+      - ci/cmi/prepare-root-integration.py
+      - .github/workflows/cmi-root-integration.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: cmi-root-integration-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  integrate:
+    name: 小米10Pro SukiSU接入编译与SUSFS适配检查
+    if: github.ref == 'refs/heads/cmi-miui12510-driver-build-20261019'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: 安装编译依赖
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential git curl unzip bc bison flex libssl-dev libelf-dev libtinfo5 libncurses5 python3 python-is-python3 cpio rsync
+      - name: 接入固定SukiSU并检查SUSFS补丁
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CMI_HOST_SANITIZERS: address,undefined
+        run: |
+          set -euo pipefail
+          python3 -m py_compile ci/cmi/prepare-root-integration.py repair-cmi-wlan.py repair-cmi-sysfs.py repair-cmi-link.py
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+          p = Path('build-cmi-drivers.sh')
+          data = p.read_bytes()
+          if hashlib.sha1(b'blob ' + str(len(data)).encode() + b'\0' + data).hexdigest() != '66b770a9ff667029f1c6d8d4fe14aa0df5c23fc0':
+              raise SystemExit('Driver baseline changed; reconcile it before proceeding')
+          source = data.decode()
+          anchor = 'export ARCH=arm64 TARGET_PRODUCT=cmi TARGET_BUILD_VARIANT=user\n'
+          if source.count(anchor) != 1:
+              raise SystemExit('Ambiguous driver assembly boundary')
+          commands = 'python3 "$ROOT/repair-cmi-wlan.py" "$WORK/kernel" "$ROOT/driver-results"\n'
+          commands += 'python3 "$ROOT/repair-cmi-sysfs.py" "$WORK/kernel" "$ROOT/driver-results"\n'
+          commands += 'python3 "$ROOT/repair-cmi-link.py" apply "$WORK/kernel" "$ROOT/driver-results"\n'
+          commands += 'python3 "$ROOT/ci/cmi/prepare-root-integration.py" prepare "$WORK/kernel" "$ROOT/driver-results"\n'
+          source = source.replace(anchor, commands + anchor)
+          anchor = '"${MAKE[@]}" olddefconfig\n'
+          if source.count(anchor) != 1:
+              raise SystemExit('Ambiguous configuration boundary')
+          settings = '"$WORK/kernel/scripts/config" --file "$WORK/out/.config" -e KSU -d KPM -d KSU_DEBUG -d KSU_SUSFS\n'
+          source = source.replace(anchor, settings + anchor)
+          anchor = '"${MAKE[@]}" Image.gz\n'
+          if source.count(anchor) != 1:
+              raise SystemExit('Ambiguous image build boundary')
+          source = source.replace(anchor, '"${MAKE[@]}" drivers/kernelsu/ksu.o\n' + anchor)
+          source = source.replace('cmi-driver-baseline', 'cmi-root-integration')
+          source = source.replace('driver baseline. Not flashable.', 'SukiSU integration stage. Not flashable.')
+          source = source.replace("'sukisu_included':False", "'sukisu_included':True,'susfs_runtime_included':False")
+          Path('build-cmi-root.generated.sh').write_text(source)
+          PY
+          bash -n build-cmi-root.generated.sh
+          bash build-cmi-root.generated.sh
+      - name: 核验整核链接与SukiSU真实目标
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 repair-cmi-link.py verify "$RUNNER_TEMP/cmi-root-integration/out" "$GITHUB_WORKSPACE/driver-results"
+          python3 ci/cmi/prepare-root-integration.py verify "$RUNNER_TEMP/cmi-root-integration/out" "$GITHUB_WORKSPACE/driver-results"
+      - name: 保留准确阶段及诊断
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p driver-results
+          cp ci/cmi/prepare-root-integration.py driver-results/
+          if test -f build-cmi-root.generated.sh; then cp build-cmi-root.generated.sh driver-results/; fi
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          root = Path('driver-results')
+          log = root / 'build.log'
+          lines = log.read_text(errors='replace').splitlines() if log.exists() else []
+          needles = ('error:', 'error ', 'traceback', 'undefined reference', 'multiple definition', 'runtimeerror', 'assertionerror')
+          errors = [line for line in lines if any(word in line.lower() for word in needles)]
+          (root / 'error-summary.txt').write_text('\n'.join(errors[-80:]) + '\n')
+          print('\n'.join(errors[-80:]))
+          report = root / 'root-integration.json'
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out:
+              out.write('### 小米10Pro Root整合阶段\n\n')
+              out.write('本轮先检查SukiSU在4.19上的编译与链接，SUSFS旧接口桥接和实机启动仍须单独验证。不是可刷AK3。\n\n')
+              if report.exists():
+                  out.write('```json\n' + report.read_text() + '\n```\n')
+              out.write('```text\n' + '\n'.join(errors[-40:]) + '\n```\n')
+          PY
+      - name: 上传源码检查及真实产物
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cmi-root-integration-${{ github.run_id }}
+          path: driver-results/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 1
