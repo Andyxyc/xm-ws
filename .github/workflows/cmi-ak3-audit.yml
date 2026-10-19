@@ -1,0 +1,79 @@
+name: CMI AK3 audit packaging
+on:
+  push:
+    branches: [cmi-miui12510-driver-build-20261019]
+    paths:
+      - ci/cmi/ak3-audit.py
+      - .github/workflows/cmi-ak3-audit.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: cmi-ak3-audit-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  ak3:
+    name: 小米10Pro内核候选包封装与禁止写入核验
+    if: github.ref == 'refs/heads/cmi-miui12510-driver-build-20261019'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: 获取已通过SukiSU内核及固定AK3模板
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p cmi-ak3-results cmi-ak3-evidence
+          curl --fail --location --retry 2 --connect-timeout 20 --max-time 240 \
+            -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' \
+            https://api.github.com/repos/Andyxyc/xm-ws/actions/artifacts/12219105545/zip -o "$RUNNER_TEMP/cmi-root-artifact.zip"
+          printf '%s  %s\n' \
+            '570d51b75ce3e5dd2164af9194f7e44b1996180f1ac81e1f0eb40a003dd29dca' \
+            "$RUNNER_TEMP/cmi-root-artifact.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/cmi-root-artifact.zip" -d cmi-ak3-evidence
+          git init -q "$RUNNER_TEMP/cmi-anykernel3"
+          git -C "$RUNNER_TEMP/cmi-anykernel3" fetch -q --depth=1 https://github.com/osm0sis/AnyKernel3.git \
+            020dfeccf9d7e962a48400fc94d3e451df92eead
+          git -C "$RUNNER_TEMP/cmi-anykernel3" checkout -q --detach FETCH_HEAD
+          test "$(git -C "$RUNNER_TEMP/cmi-anykernel3" rev-parse HEAD)" = 020dfeccf9d7e962a48400fc94d3e451df92eead
+      - name: 从真实构建成果制作不写入审核包
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile ci/cmi/ak3-audit.py
+          python3 ci/cmi/ak3-audit.py \
+            "$GITHUB_WORKSPACE/cmi-ak3-evidence" \
+            "$RUNNER_TEMP/cmi-anykernel3" \
+            "$GITHUB_WORKSPACE/cmi-ak3-results"
+          test -s cmi-ak3-results/CMI-SukiSU41023-MIUI12510-AK3-AUDIT-NOFLASH.zip
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          p=Path("cmi-ak3-results/AUDIT-RESULT.json")
+          obj=json.loads(p.read_text())
+          assert obj["host_write_guard_checks"]==2
+          assert obj["boot_partition_write"] is False
+          assert obj["real_susfs"] is False
+          PY
+          (cd cmi-ak3-results; sha256sum *zip > SHA256SUMS)
+      - name: 保存审核结果与错误
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p cmi-ak3-results
+          cp ci/cmi/ak3-audit.py cmi-ak3-results/
+          printf 'Only a blocked-install audit candidate, not a flashable kernel.\n' > cmi-ak3-results/NOT_FLASHABLE.txt
+      - name: 保存候选包和核验记录
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cmi-ak3-audit-${{ github.run_id }}
+          path: cmi-ak3-results/
+          if-no-files-found: error
+          retention-days: 7
