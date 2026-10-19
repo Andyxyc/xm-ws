@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """CMI root integration stage; no phone access or flashable packaging.
 
-Reuse the verified MiCode driver baseline. Keep the previous source archives
-unchanged. Compile the pinned upstream SukiSU first; independently record the
-legacy SUSFS patch's actual applicability before resolving its newer-KSU bridge.
+Reuse the verified MiCode driver baseline. Preserve original source archives.
+Compile pinned upstream SukiSU and record the legacy SUSFS patch applicability.
 Integration: xiaomo. Upstream notices and licenses are preserved.
 """
 from pathlib import Path
@@ -41,6 +40,137 @@ def checkout(destination, url, commit):
         raise RuntimeError('Pinned checkout mismatch')
 
 
+def repair_legacy_compile(target, results):
+    expected = {
+        'policy/allowlist.c': 'da3cff356f76c7bcfbac06e9ada58247cc775c7e',
+        'policy/feature.c': 'e5116ab2cd0ce2ef58df912959be5d7c3faebf05',
+        'runtime/ksud.c': '2213078c429a9a6766f85f306897d54b96c27220',
+        'sulog/event.c': 'e45f01fac4799c4955cb17019132c227706a9e98',
+        'include/uapi/feature.h': 'a27a9aa8e03c31040f206376c5d777246350234f',
+        'ksu.c': '558037d101c3488bd7eec8a2475c876b2d13d5a6',
+    }
+    original = {}
+    for relative, sha in expected.items():
+        path = target / relative
+        if not path.resolve(strict=True).is_relative_to(target.resolve()):
+            raise RuntimeError('Source path escapes KernelSU directory')
+        data = path.read_bytes()
+        if blob(data) != sha:
+            raise RuntimeError('Unreviewed source or repeated patch: ' + relative)
+        original[relative] = data.decode('utf-8')
+    edited = dict(original)
+    guard = '#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)\n'
+    # The pinned unity build, declaration and init are already gated at 5.10.
+    for include in ('feature/selinux_hide.h', 'feature/selinux_hide.c'):
+        if guard + '#include "' + include + '"\n#endif' not in original['ksu.c']:
+            raise RuntimeError('Upstream SELinux-hide support boundary changed')
+    feature_line = '    [KSU_FEATURE_SELINUX_HIDE] = "selinux_hide",\n'
+    if edited['policy/feature.c'].count(feature_line) != 1:
+        raise RuntimeError('Ambiguous optional feature-name entry')
+    feature_block = guard + feature_line + '#endif\n'
+    edited['policy/feature.c'] = edited['policy/feature.c'].replace(feature_line, feature_block)
+    call_blocks = []
+    for name, count in (('ksu_selinux_hide_handle_post_fs_data', 1),
+                        ('ksu_selinux_hide_handle_second_stage', 2)):
+        pattern = re.compile(r'(?m)^([ \t]*)' + name + r'\(\);\n')
+        matches = list(pattern.finditer(edited['runtime/ksud.c']))
+        if len(matches) != count:
+            raise RuntimeError('Unexpected optional feature call count: ' + name)
+        def wrap(match):
+            block = guard + match.group(0) + '#endif\n'
+            call_blocks.append(block)
+            return block
+        edited['runtime/ksud.c'] = pattern.sub(wrap, edited['runtime/ksud.c'])
+    old = '        fallthrough;\n'
+    new = '        __attribute__((__fallthrough__));\n'
+    if edited['policy/allowlist.c'].count(old) != 1:
+        raise RuntimeError('Profile migration fallthrough changed')
+    edited['policy/allowlist.c'] = edited['policy/allowlist.c'].replace(old, new)
+    old = '    #define USER_ARG_NULL user_arg_null_ptr()\n'
+    macro = ('#ifdef CONFIG_KSU_SUSFS\n'
+             '#define USER_ARG_NULL user_arg_null_ptr()\n'
+             '#else\n#define USER_ARG_NULL (*user_arg_null_ptr())\n#endif\n')
+    if edited['sulog/event.c'].count(old) != 1:
+        raise RuntimeError('Sulog null-argument call changed')
+    if 'const struct user_arg_ptr argv, gfp_t gfp)' not in original['sulog/event.c']:
+        raise RuntimeError('Non-SUSFS sulog no longer uses by-value argv')
+    edited['sulog/event.c'] = edited['sulog/event.c'].replace(old, macro)
+    # Compile the exact changed conditional fragments with both source versions
+    # and both argv ABIs. No SELinux-hide implementation is invented for 4.19.
+    prefix = r'''#include <assert.h>
+#include <stddef.h>
+#define KERNEL_VERSION(a,b,c) (((a) << 16) + ((b) << 8) + (c))
+static unsigned hide_calls;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,10,0)
+static void ksu_selinux_hide_handle_post_fs_data(void) { ++hide_calls; }
+static void ksu_selinux_hide_handle_second_stage(void) { ++hide_calls; }
+#endif
+struct user_arg_ptr { int is_compat; union { const void *native; const void *compat; } ptr; };
+static struct user_arg_ptr *user_arg_null_ptr(void)
+{ static struct user_arg_ptr null_arg = {0}; return &null_arg; }
+#ifdef CONFIG_KSU_SUSFS
+static void capture(struct user_arg_ptr *argv)
+{ assert(argv && !argv->ptr.native && !argv->is_compat); }
+#else
+static void capture(struct user_arg_ptr argv)
+{ assert(!argv.ptr.native && !argv.is_compat); }
+#endif
+'''
+    source = prefix + original['include/uapi/feature.h']
+    source += 'static const char *const feature_names[KSU_FEATURE_MAX] = {\n'
+    source += '    [KSU_FEATURE_SU_COMPAT] = "su_compat",\n' + feature_block + '};\n'
+    source += macro + 'static void invoke_optional_hooks(void) {\n' + ''.join(call_blocks) + '}\n'
+    source += ('static int migration(int version) {\n    int result = 0;\n'
+               '    switch (version) { case 2: result += 2;\n' + new +
+               '    case 3: result += 3; break; }\n    return result;\n}\n')
+    source += r'''int main(void) {
+    capture(USER_ARG_NULL);
+    invoke_optional_hooks();
+    assert(migration(2) == 5 && migration(3) == 3 && migration(1) == 0);
+    assert(KSU_FEATURE_MAX == 7 && feature_names[0]);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,10,0)
+    assert(hide_calls == 3 && feature_names[4]);
+#else
+    assert(hide_calls == 0 && !feature_names[4]);
+#endif
+    return 0;
+}
+'''
+    test = results / 'sukisu-legacy-compile-regression.c'
+    test.write_text(source, encoding='utf-8')
+    checks = []
+    for version, code in (('4.19', 267008), ('5.10', 330240)):
+        for susfs in (False, True):
+            name = version.replace('.', '-') + ('-pointer' if susfs else '-value')
+            binary = results / ('sukisu-compile-test-' + name)
+            argv = ['cc', '-std=c11', '-O2', '-Wall', '-Wextra', '-Werror',
+                    '-Wimplicit-fallthrough=5', '-DLINUX_VERSION_CODE=' + str(code)]
+            if susfs:
+                argv += ['-DCONFIG_KSU_SUSFS=1']
+            run(argv + [str(test), '-o', str(binary)])
+            run([str(binary)])
+            checks.append({'version_boundary': version, 'argv_abi': name, 'result': 'passed'})
+    diffs = []
+    hashes = {}
+    for relative in expected:
+        if edited[relative] == original[relative]:
+            continue
+        diffs.extend(difflib.unified_diff(original[relative].splitlines(True),
+                     edited[relative].splitlines(True),
+                     fromfile='a/drivers/kernelsu/' + relative,
+                     tofile='b/drivers/kernelsu/' + relative))
+        (target / relative).write_text(edited[relative], encoding='utf-8')
+        hashes[relative] = hashlib.sha256((target / relative).read_bytes()).hexdigest()
+    (results / 'sukisu-legacy-compile.patch').write_text(''.join(diffs), encoding='utf-8')
+    (results / 'sukisu-legacy-compile-checks.json').write_text(json.dumps({
+        'upstream_commit': SUKI_SHA, 'source_blobs': expected, 'after_sha256': hashes,
+        'host_configurations': checks, 'real_arm64_compile': 'pending',
+        'selinux_enforcing_changed': False, 'CRC_checks_disabled': False,
+        'SUSFS_runtime_claimed': False, 'phone_test': 'not_performed'
+    }, indent=2) + '\n')
+    print('SukiSU legacy guards and argv types repaired; four host configuration tests passed.')
+
+
 def prepare(kernel, results):
     if run(['git', '-C', str(kernel), 'rev-parse', 'HEAD'],
            capture_output=True, text=True).stdout.strip() != '64b40409431988d060f7484369c8c2d7deca1bb3':
@@ -70,6 +200,7 @@ def prepare(kernel, results):
     (results / 'sukisu-version-lock.patch').write_text(''.join(difflib.unified_diff(
         text.splitlines(True), after.splitlines(True),
         fromfile='a/drivers/kernelsu/Makefile', tofile='b/drivers/kernelsu/Makefile')))
+    repair_legacy_compile(target, results)
     for relative, addition in (
         ('drivers/Makefile', 'obj-$(CONFIG_KSU) += kernelsu/\n'),
         ('drivers/Kconfig', 'source "drivers/kernelsu/Kconfig"\n'),
@@ -87,7 +218,6 @@ def prepare(kernel, results):
         raise RuntimeError('SUSFS header revision changed')
     if '#define SUSFS_VERSION "v1.5.5"' not in header.read_text():
         raise RuntimeError('Unexpected SUSFS protocol')
-    # This is a diagnostic dry run, never silent application or a success claim.
     probe = subprocess.run(['git', '-C', str(kernel), 'apply', '--check', '--verbose', str(patch)],
                            text=True, capture_output=True, timeout=120)
     (results / 'susfs-apply-check.log').write_text(probe.stdout + probe.stderr)
@@ -110,6 +240,7 @@ def prepare(kernel, results):
         'susfs_apply_check_returncode': probe.returncode,
         'susfs_integration': 'pending_legacy_to_modern_ksu_bridge',
         'stage': 'SukiSU compiler and link compatibility; SUSFS source applicability',
+        'compile_repairs': 'sukisu-legacy-compile-checks.json',
         'previous_custom_source_archive_modified': False,
         'KPM': False, 'flashable': False, 'phone_test': 'not_performed',
     }
