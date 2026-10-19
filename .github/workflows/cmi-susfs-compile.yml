@@ -1,0 +1,105 @@
+name: CMI SUSFS 1.5.5 kernel compile
+on:
+  push:
+    branches: [cmi-miui12510-driver-build-20261019]
+    paths:
+      - ci/cmi/susfs-port-compile.py
+      - .github/workflows/cmi-susfs-compile.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: cmi-susfs-compile-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  compile:
+    name: 小米10Pro SukiSU与旧版SUSFS整核适配验证
+    if: github.ref == 'refs/heads/cmi-miui12510-driver-build-20261019'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: 安装固定工具链需要的编译依赖
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential git curl unzip bc bison flex libssl-dev libelf-dev libtinfo5 libncurses5 python3 python-is-python3 cpio rsync
+      - name: 固定源码并实际编译旧版SUSFS实验内核
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 -m py_compile ci/cmi/*.py
+          python3 - <<'PY'
+          import hashlib
+          from pathlib import Path
+          p=Path("build-cmi-drivers.sh")
+          raw=p.read_bytes()
+          actual=hashlib.sha1(b"blob "+str(len(raw)).encode()+b"\0"+raw).hexdigest()
+          if actual!="66b770a9ff667029f1c6d8d4fe14aa0df5c23fc0":
+              raise SystemExit("Reviewed driver build source changed")
+          s=raw.decode()
+          anchor="export ARCH=arm64 TARGET_PRODUCT=cmi TARGET_BUILD_VARIANT=user\n"
+          assert s.count(anchor)==1
+          inject='python3 "$ROOT/repair-cmi-wlan.py" "$WORK/kernel" "$ROOT/driver-results"\n'
+          inject+='python3 "$ROOT/repair-cmi-sysfs.py" "$WORK/kernel" "$ROOT/driver-results"\n'
+          inject+='python3 "$ROOT/repair-cmi-link.py" apply "$WORK/kernel" "$ROOT/driver-results"\n'
+          inject+='python3 "$ROOT/ci/cmi/prepare-root-integration.py" prepare "$WORK/kernel" "$ROOT/driver-results"\n'
+          inject+='python3 "$ROOT/ci/cmi/apply-manual-hooks.py" apply "$WORK/kernel" "$ROOT/driver-results"\n'
+          inject+='python3 "$ROOT/ci/cmi/susfs-port-compile.py" apply "$WORK/kernel" "$ROOT/driver-results"\n'
+          s=s.replace(anchor,inject+anchor,1)
+          anchor='"${MAKE[@]}" olddefconfig\n'.replace("$", "$")
+          assert s.count(anchor)==1
+          settings='"$WORK/kernel/scripts/config" --file "$WORK/out/.config" -e KSU -d KPM -d KSU_DEBUG -e KSU_SUSFS\n'
+          settings+='"$WORK/kernel/scripts/config" --file "$WORK/out/.config" -d KSU_SUSFS_SUS_PATH -d KSU_SUSFS_SUS_MOUNT -d KSU_SUSFS_SUS_KSTAT -d KSU_SUSFS_OPEN_REDIRECT -d KSU_SUSFS_SUS_MAP -d KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS\n'
+          settings+='"$WORK/kernel/scripts/config" --file "$WORK/out/.config" -e KSU_SUSFS_SPOOF_UNAME -e KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG -e KSU_SUSFS_ENABLE_LOG\n'
+          s=s.replace(anchor,settings+anchor,1)
+          s=s.replace("cmi-driver-baseline","cmi-susfs-compile")
+          s=s.replace("driver baseline. Not flashable.","SUSFS 1.5.5 experimental source compile. Not flashable.")
+          s=s.replace("'sukisu_included':False","'sukisu_included':True,'susfs_experimental':True")
+          Path("build-cmi-susfs.generated.sh").write_text(s)
+          PY
+          bash -n build-cmi-susfs.generated.sh
+          bash build-cmi-susfs.generated.sh
+      - name: 验证SUSFS和驱动最终链接符号
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 repair-cmi-link.py verify "$RUNNER_TEMP/cmi-susfs-compile/out" "$GITHUB_WORKSPACE/driver-results"
+          python3 ci/cmi/susfs-port-compile.py verify "$RUNNER_TEMP/cmi-susfs-compile/out" "$GITHUB_WORKSPACE/driver-results"
+          grep -x CONFIG_KSU=y driver-results/kernel.config
+          grep -x CONFIG_KSU_SUSFS=y driver-results/kernel.config
+          printf 'Experimental SUSFS v1.5.5 core compiled. Phone and tool protocol untested. NEVER FLASH.\n' > driver-results/NOT_FLASHABLE.txt
+      - name: 保留完整诊断与补丁
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p driver-results
+          cp ci/cmi/susfs-port.py ci/cmi/susfs-port-compile.py driver-results/
+          test ! -f build-cmi-susfs.generated.sh || cp build-cmi-susfs.generated.sh driver-results/
+          printf 'SUSFS experimental source. Not verified on actual cmi device. Do not flash.\n' > driver-results/NOT_FLASHABLE.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          root=Path("driver-results")
+          p=root/"build.log"
+          lines=p.read_text(errors="replace").splitlines() if p.is_file() else []
+          needles=["error:", "undefined reference","traceback","fatal error"]
+          hits=[s for s in lines if any(t in s.lower() for t in needles)]
+          (root/"error-summary.txt").write_text("\n".join(hits[-80:])+"\n")
+          print("\n".join(hits[-20:]))
+          PY
+      - name: 保存所有真实结果
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cmi-susfs-compile-${{ github.run_id }}
+          path: driver-results/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 1
