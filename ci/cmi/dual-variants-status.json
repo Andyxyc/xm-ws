@@ -1,0 +1,61 @@
+{
+  "project": "xiaomi10pro-cmi-miui12510",
+  "rom": "V12.5.10.0.RJACNXM",
+  "kernel": "4.19.113",
+  "device": "cmi",
+  "source": {
+    "MiCode": "64b40409431988d060f7484369c8c2d7deca1bb3",
+    "dtree": "2a5e1922a42960f72104cf0b256112d6dbd4a6ff",
+    "SukiSU": "7f1c299af463d008e66e714077eb6a8079ff722b",
+    "SUSFS": "001e69919c6271f690fd00b17e4c721c9e599152"
+  },
+  "variants": {
+    "SukiSU_NoSUSFS": {
+      "root_compile_run": 39313741454,
+      "root_compile": "success",
+      "audit_run": 39321141550,
+      "audit": "success",
+      "github_artifact_id": 12219778089,
+      "git_artifact_sha256": "d4adc6ef27cd5bdc2d0d947340a5e72d8140a12fd8ce1986e77a74180c67b8bc",
+      "SUSFS": false
+    },
+    "SukiSU_SUSFS155": {
+      "root_compile_run": 39320437792,
+      "root_compile": "success",
+      "audit_run": 39323392922,
+      "audit": "success",
+      "github_artifact_id": 12220312616,
+      "git_artifact_sha256": "1a6e898333820799eaecd2869be09bee06357738b4eeb21b75e15581465c44e5",
+      "SUSFS": "1.5.5 legacy experimental",
+      "available_features": [
+        "spoof_uname",
+        "spoof_cmdline",
+        "log"
+      ],
+      "control_protocol": "not_verified"
+    }
+  },
+  "device_tree": {
+    "run": 39323540324,
+    "result": "success",
+    "artifact_id": 12221597028,
+    "git_artifact_sha256": "4dfab851e41d48e310b733c77cd06a22f77774409a49df8efa4f744ab268c223",
+    "cmi_overlay": "cmi-sm8250-overlay.dtbo",
+    "base": "kona.dtb",
+    "stock_boot_comparison": "not_performed"
+  },
+  "common_constraints": {
+    "KPM": false,
+    "flashable": false,
+    "installer_entrypoints": "blocked",
+    "phone_boot": "not_tested",
+    "stock_vendor_modules": "compatibility_not_proven",
+    "restore_test": "not_performed",
+    "no_device_writes": true
+  },
+  "pending": [
+    "SukiSU+SUSFS final ARM64 hook relocations verification run 39323904314",
+    "original MIUI boot/dtb and module CRC full compatibility",
+    "real device boot and recovery test"
+  ]
+}
