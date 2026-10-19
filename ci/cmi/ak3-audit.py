@@ -92,7 +92,7 @@ def assemble(evidence,ak3,out):
         result=subprocess.run(["/bin/sh",str(staging/entry)],text=True,capture_output=True,timeout=10)
         if result.returncode!=1 or "禁止刷写" not in result.stdout:
             raise RuntimeError("Write guard did not fail closed: "+entry)
-    package=out/"CMI-SukiSU41023-MIUI12510-AK3-AUDIT-NOFLASH.zip"
+    package=out/"CMI-SukiSU41023-NoSUSFS-MIUI12510-AK3-AUDIT-NOFLASH.zip"
     if package.exists():package.unlink()
     with zipfile.ZipFile(package,"w",zipfile.ZIP_DEFLATED,compresslevel=6) as z:
         for p in sorted(staging.rglob("*")):
