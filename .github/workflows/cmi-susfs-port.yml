@@ -1,0 +1,55 @@
+name: CMI SUSFS 1.5.5 source port
+on:
+  push:
+    branches: [cmi-miui12510-driver-build-20261019]
+    paths:
+      - ci/cmi/susfs-port.py
+      - .github/workflows/cmi-susfs-port.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: cmi-susfs-port-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  port:
+    name: 小米10Pro SUSFS原始补丁逐项适配
+    if: github.ref == 'refs/heads/cmi-miui12510-driver-build-20261019'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: 准备公开源码及原有SukiSU调用点
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p susfs-compat-results
+          work="$RUNNER_TEMP/cmi-susfs-compat"
+          mkdir -p "$work"
+          git init -q "$work/kernel"
+          git -C "$work/kernel" fetch -q --depth=1 https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git \
+            64b40409431988d060f7484369c8c2d7deca1bb3
+          git -C "$work/kernel" checkout -q --detach FETCH_HEAD
+          python3 -m py_compile ci/cmi/susfs-port.py ci/cmi/prepare-root-integration.py ci/cmi/apply-manual-hooks.py
+          python3 ci/cmi/prepare-root-integration.py prepare "$work/kernel" "$GITHUB_WORKSPACE/susfs-compat-results"
+          python3 ci/cmi/apply-manual-hooks.py apply "$work/kernel" "$GITHUB_WORKSPACE/susfs-compat-results"
+          python3 ci/cmi/susfs-port.py "$work/kernel" "$GITHUB_WORKSPACE/susfs-compat-results"
+      - name: 留存补丁差异和可重建来源
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p susfs-compat-results
+          cp ci/cmi/susfs-port.py susfs-compat-results/
+          printf 'SUSFS source port: diagnostic patch applicability only; no device or partition writes.\n' \
+            > susfs-compat-results/NOT_FLASHABLE.txt
+      - name: 上传逐项移植记录
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cmi-susfs-port-${{ github.run_id }}
+          path: susfs-compat-results/
+          if-no-files-found: error
+          retention-days: 7
