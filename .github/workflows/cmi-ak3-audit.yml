@@ -50,7 +50,7 @@ jobs:
             "$GITHUB_WORKSPACE/cmi-ak3-evidence" \
             "$RUNNER_TEMP/cmi-anykernel3" \
             "$GITHUB_WORKSPACE/cmi-ak3-results"
-          test -s cmi-ak3-results/CMI-SukiSU41023-MIUI12510-AK3-AUDIT-NOFLASH.zip
+          test -s cmi-ak3-results/CMI-SukiSU41023-NoSUSFS-MIUI12510-AK3-AUDIT-NOFLASH.zip
           python3 - <<'PY'
           from pathlib import Path
           import json
