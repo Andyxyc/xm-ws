@@ -32,8 +32,8 @@ def apply(k,r):
             "#include <linux/mm_inline.h>\n#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT\n"
             "#include <linux/susfs_def.h>\n#endif\n#include <linux/ctype.h>\n")
     p=k/"fs/readdir.c"
-    replace(p,"\tif (buf->result)\n\t\treturn -EINVAL;\n\td_ino = ino;\n",
-            "\tif (buf->result)\n\t\treturn -EINVAL;\n"
+    replace(p,"\tcompat_ulong_t d_ino;\n\n\tif (buf->result)\n\t\treturn -EINVAL;\n\td_ino = ino;\n",
+            "\tcompat_ulong_t d_ino;\n\n\tif (buf->result)\n\t\treturn -EINVAL;\n"
             "#ifdef CONFIG_KSU_SUSFS_SUS_PATH\n"
             "\tif (likely(current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC) &&\n"
             "\t    susfs_sus_ino_for_filldir64(ino)) return 0;\n#endif\n\td_ino = ino;\n")
