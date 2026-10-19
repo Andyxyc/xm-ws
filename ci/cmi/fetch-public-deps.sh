@@ -14,9 +14,13 @@ fetch_archive() {
   git -C "$WORK/$name" archive --format=tar HEAD | gzip -n > "$OUT/$name.tar.gz"
   printf '%s %s %s\n' "$name" "$sha" "$url" >> "$OUT/SOURCES.txt"
 }
-CLANG_URL='https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android11-release/clang-r377782c.tar.gz'
+CLANG_URL='https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/tags/android-11.0.0_r3/clang-r377782c.tar.gz'
 curl --fail --location --retry 2 --connect-timeout 30 --max-time 1200 "$CLANG_URL" -o "$OUT/clang-r377782c.tar.gz"
-printf '%s  %s\n' '466310a4275ee9fd8ed31527feb5f1e6b95eb5501c31f58b7325727aa5bbaf38' "$OUT/clang-r377782c.tar.gz" | sha256sum -c -
+# The previous generated archive SHA failed. Validate all files and modes
+# against the immutable AOSP android-11.0.0_r3 subtree instead of trusting a
+# renamed archive, ignoring a failed check, or accepting a moving branch.
+python3 "$ROOT/ci/cmi/verify-git-archive.py" "$OUT/clang-r377782c.tar.gz" \
+  4c73695e3f20f85d0e50b3001806cff59bf7f3dc "$OUT/clang-tree-verification.json"
 printf 'clang Android-r377782c-10.0.5 %s\n' "$CLANG_URL" >> "$OUT/SOURCES.txt"
 mkdir "$WORK/clang-r377782c"
 tar -xzf "$OUT/clang-r377782c.tar.gz" -C "$WORK/clang-r377782c"

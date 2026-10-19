@@ -2,7 +2,7 @@ name: CMI public compiler and drivers
 on:
   push:
     branches: [cmi-miui12510-driver-build-20261019]
-    paths: ['ci/cmi/fetch-public-deps.sh', '.github/workflows/cmi-public-deps.yml']
+    paths: ['ci/cmi/**', '.github/workflows/cmi-public-deps.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -32,4 +32,15 @@ jobs:
           path: public-deps/
           if-no-files-found: error
           compression-level: 0
+          retention-days: 1
+      - name: 保存失败检查记录
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cmi-deps-diagnostic-${{ github.run_id }}
+          path: |
+            public-deps/*.json
+            public-deps/*version.txt
+            public-deps/SOURCES.txt
+          if-no-files-found: warn
           retention-days: 1
