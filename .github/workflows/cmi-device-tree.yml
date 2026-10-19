@@ -41,10 +41,10 @@ jobs:
           anchor='"${MAKE[@]}" Image.gz\n'.replace("$", "$")
           assert s.count(anchor)==1
           before=s[:s.index(anchor)]
-          configline='"\${MAKE[@]}" olddefconfig\\n'
+          configline='"${MAKE[@]}" olddefconfig\n'
           assert before.count(configline)==1
           before=before.replace(configline,
-              '"$WORK/kernel/scripts/config" --file "$WORK/out/.config" -e BUILD_ARM64_DT_OVERLAY\\n'+configline)
+              '"$WORK/kernel/scripts/config" --file "$WORK/out/.config" -e BUILD_ARM64_DT_OVERLAY\n'+configline)
           end='''grep -x CONFIG_BUILD_ARM64_DT_OVERLAY=y "$WORK/out/.config"
           "${MAKE[@]}" dtbs
           mkdir -p "$ROOT/driver-results/cmi-device-trees"
