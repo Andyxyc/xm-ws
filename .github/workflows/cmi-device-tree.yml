@@ -74,7 +74,7 @@ jobs:
                   "sha256":{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in files},
                   "comparison_to_stock_boot":"not_performed",
                   "flashable":False}
-          (out/"device-tree-verification.json").write_text(json.dumps(report,indent=2)+"\n")
+          (out/"device-tree-verification.json").write_text(json.dumps(report,indent=2)+chr(10))
           INNER
           printf 'Device tree compile probe. No boot partition or device modified.\n' > "$ROOT/driver-results/NOT_FLASHABLE.txt"
           '''
