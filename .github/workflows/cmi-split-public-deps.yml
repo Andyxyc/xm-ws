@@ -1,0 +1,93 @@
+name: CMI public dependency transfer parts
+on:
+  push:
+    branches: [cmi-miui12510-driver-build-20261019]
+    paths: ['.github/workflows/cmi-split-public-deps.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: cmi-public-deps-transfer-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  split:
+    name: 分卷保存已验证的公开依赖
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - name: 下载并核对原始构建产物
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/cmi-miui12510-driver-build-20261019
+          gh api repos/Andyxyc/xm-ws/actions/artifacts/12186620532/zip > public-deps.zip
+          printf '%s  %s\n' 4d972ff96e5b79922982da0234d583a2ed9aad9c95dfa3cc9ecd6543fe8307e0 public-deps.zip | sha256sum -c -
+          test "$(stat -c %s public-deps.zip)" = 384718312
+          mkdir transfer
+          split -b 67108864 -d -a 2 public-deps.zip transfer/cmi-public-deps.zip.part-
+          test "$(find transfer -maxdepth 1 -type f | wc -l)" = 6
+          (cd transfer; sha256sum cmi-public-deps.zip.part-* > PART-SHA256SUMS)
+          printf 'Original public dependency artifact: 12186620532; run 39252875469.\nJoin part-00 through part-05 in numerical order without decompressing the parts.\nReassembled ZIP: 384718312 bytes; SHA256 4d972ff96e5b79922982da0234d583a2ed9aad9c95dfa3cc9ecd6543fe8307e0.\nSix parts; all are required. Contains only upstream compilers, public drivers and dependency probes, not a kernel or a flash package.\n' > transfer/REASSEMBLY.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cmi-public-deps-part-00
+          path: |
+            transfer/cmi-public-deps.zip.part-00
+            transfer/PART-SHA256SUMS
+            transfer/REASSEMBLY.txt
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 1
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cmi-public-deps-part-01
+          path: |
+            transfer/cmi-public-deps.zip.part-01
+            transfer/PART-SHA256SUMS
+            transfer/REASSEMBLY.txt
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 1
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cmi-public-deps-part-02
+          path: |
+            transfer/cmi-public-deps.zip.part-02
+            transfer/PART-SHA256SUMS
+            transfer/REASSEMBLY.txt
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 1
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cmi-public-deps-part-03
+          path: |
+            transfer/cmi-public-deps.zip.part-03
+            transfer/PART-SHA256SUMS
+            transfer/REASSEMBLY.txt
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 1
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cmi-public-deps-part-04
+          path: |
+            transfer/cmi-public-deps.zip.part-04
+            transfer/PART-SHA256SUMS
+            transfer/REASSEMBLY.txt
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 1
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cmi-public-deps-part-05
+          path: |
+            transfer/cmi-public-deps.zip.part-05
+            transfer/PART-SHA256SUMS
+            transfer/REASSEMBLY.txt
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 1
