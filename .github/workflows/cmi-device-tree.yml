@@ -1,0 +1,96 @@
+name: CMI stock-compatible device tree probe
+on:
+  push:
+    branches: [cmi-miui12510-driver-build-20261019]
+    paths:
+      - .github/workflows/cmi-device-tree.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  dtb:
+    name: 小米10Pro原厂设备树单独构建及DTB核对
+    if: github.ref == 'refs/heads/cmi-miui12510-driver-build-20261019'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: 编译依赖
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential git curl unzip bc bison flex libssl-dev libelf-dev libtinfo5 libncurses5 python3 python-is-python3 cpio rsync device-tree-compiler
+      - name: 使用已验证工具链生成官方cmi设备树
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+          p=Path("build-cmi-drivers.sh")
+          b=p.read_bytes()
+          actual=hashlib.sha1(b"blob "+str(len(b)).encode()+b"\0"+b).hexdigest()
+          if actual!="66b770a9ff667029f1c6d8d4fe14aa0df5c23fc0":
+              raise SystemExit("Kernel source builder changed; refusing unchecked baseline")
+          s=b.decode()
+          anchor='"${MAKE[@]}" Image.gz\n'.replace("$", "$")
+          assert s.count(anchor)==1
+          before=s[:s.index(anchor)]
+          end='''"${MAKE[@]}" dtbs
+          mkdir -p "$ROOT/driver-results/cmi-device-trees"
+          find "$WORK/out/arch/arm64/boot/dts" -type f -name '*.dtb' -size +0c | sort > "$ROOT/driver-results/compiled-dtbs.txt"
+          find "$WORK/out/arch/arm64/boot/dts" -type f -name '*.dtbo' -size +0c | sort > "$ROOT/driver-results/compiled-dtbos.txt"
+          test -s "$ROOT/driver-results/compiled-dtbs.txt"
+          test -s "$ROOT/driver-results/compiled-dtbos.txt"
+          ov=$(find "$WORK/out/arch/arm64/boot/dts" -type f -name 'cmi-sm8250-overlay.dtbo' | head -n 1)
+          base=$(find "$WORK/out/arch/arm64/boot/dts" -type f -name 'kona.dtb' | head -n 1)
+          test -n "$ov" && test -s "$ov"
+          test -n "$base" && test -s "$base"
+          cp "$ov" "$base" "$ROOT/driver-results/cmi-device-trees/"
+          dtc -I dtb -O dts -o "$ROOT/driver-results/cmi-device-trees/cmi-overlay.dts" "$ov" 2> "$ROOT/driver-results/dtc-warnings.txt"
+          python3 - <<'INNER'
+          from pathlib import Path
+          import hashlib,json,os
+          out=Path(os.environ["GITHUB_WORKSPACE"])/"driver-results"
+          files=list((out/"cmi-device-trees").glob("*.dtb*"))
+          for file in files:
+              if file.read_bytes()[:4]!=bytes.fromhex("d00dfeed"):
+                  raise SystemExit("Invalid FDT magic: "+str(file))
+          report={"device":"cmi","config":"cmi_user_defconfig",
+                  "kernel_source":"64b40409431988d060f7484369c8c2d7deca1bb3",
+                  "device_tree_source":"2a5e1922a42960f72104cf0b256112d6dbd4a6ff",
+                  "compiled_dtb_count":len((out/"compiled-dtbs.txt").read_text().splitlines()),
+                  "compiled_dtbo_count":len((out/"compiled-dtbos.txt").read_text().splitlines()),
+                  "sha256":{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in files},
+                  "comparison_to_stock_boot":"not_performed",
+                  "flashable":False}
+          (out/"device-tree-verification.json").write_text(json.dumps(report,indent=2)+"\n")
+          INNER
+          printf 'Device tree compile probe. No boot partition or device modified.\n' > "$ROOT/driver-results/NOT_FLASHABLE.txt"
+          '''
+          Path("build-cmi-dtb.generated.sh").write_text(before+end.replace("$","$"))
+          PY
+          mkdir -p driver-results
+          bash -n build-cmi-dtb.generated.sh
+          bash build-cmi-dtb.generated.sh
+      - name: 保存结果与脚本
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p driver-results
+          test ! -f build-cmi-dtb.generated.sh || cp build-cmi-dtb.generated.sh driver-results/
+          printf 'Device tree build/compare experiment; not a flashable image.\n' > driver-results/NOT_FLASHABLE.txt
+      - name: 保存官方设备树编译记录
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cmi-device-tree-${{ github.run_id }}
+          path: driver-results/
+          retention-days: 7
+          if-no-files-found: error
+          compression-level: 1
