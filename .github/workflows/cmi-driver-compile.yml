@@ -2,7 +2,7 @@ name: CMI audio and WLAN kernel build
 on:
   push:
     branches: [cmi-miui12510-driver-build-20261019]
-    paths: ['build-cmi-drivers.sh', '.github/workflows/cmi-driver-compile.yml']
+    paths: ['build-cmi-drivers.sh', 'repair-cmi-wlan.py', '.github/workflows/cmi-driver-compile.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -32,8 +32,37 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
+          python3 -m py_compile repair-cmi-wlan.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('build-cmi-drivers.sh')
+          source = p.read_text()
+          anchor = 'export ARCH=arm64 TARGET_PRODUCT=cmi TARGET_BUILD_VARIANT=user\n'
+          if source.count(anchor) != 1:
+              raise SystemExit('build entry changed; inspect before applying repair')
+          repair = 'python3 "$ROOT/repair-cmi-wlan.py" "$WORK/kernel" "$ROOT/driver-results"\n'
+          p.write_text(source.replace(anchor, repair + anchor))
+          PY
           bash -n build-cmi-drivers.sh
           bash build-cmi-drivers.sh
+      - name: 保存实际入口及错误摘要
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p driver-results
+          cp build-cmi-drivers.sh repair-cmi-wlan.py driver-results/
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('driver-results/build.log')
+          if p.exists():
+              lines = p.read_text(errors='replace').splitlines()
+              errors = [s for s in lines if 'error:' in s.lower() or 'Error ' in s or 'Traceback' in s]
+              Path('driver-results/error-summary.txt').write_text('\n'.join(errors[-40:]) + '\n')
+              with open(__import__('os').environ['GITHUB_STEP_SUMMARY'], 'a') as f:
+                  f.write('### Build diagnostics (not a flashable release)\n```text\n' + '\n'.join(errors[-20:]) + '\n```\n')
+          PY
       - name: 保存完整日志与可得产物
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
