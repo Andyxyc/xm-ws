@@ -2,7 +2,7 @@ name: CMI public compiler and drivers
 on:
   push:
     branches: [cmi-miui12510-driver-build-20261019]
-    paths: ['ci/cmi/**', '.github/workflows/cmi-public-deps.yml']
+    paths: ['ci/cmi/fetch-public-deps.sh', '.github/workflows/cmi-public-deps.yml']
   workflow_dispatch:
 permissions:
   contents: read
