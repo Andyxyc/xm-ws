@@ -39,19 +39,33 @@ grep -F r377782c "$ROOT/driver-results/clang.txt"
 grep -F '2.27.0.20170315' "$ROOT/driver-results/linker.txt"
 export CMI_DRIVER_WORK="$WORK"
 python3 - <<'PY'
-import os, tarfile, pathlib, json, re
+import os, tarfile, pathlib, json, re, shutil
 w=pathlib.Path(os.environ['CMI_DRIVER_WORK']); k=w/'kernel'; repairs=[]
+destination=w/'wlan-source';destination.mkdir();destination=destination.resolve()
 with tarfile.open(w/'deps/wlan.tar.gz') as t:
-    all_names={m.name.rstrip('/') for m in t.getmembers()}
-    def checked(m,d):
-        if m.issym() and m.linkname.startswith('/'):
-            assert '/vendor/qcom/opensource/wlan/' in m.linkname
-            target=m.linkname.split('/vendor/qcom/opensource/wlan/',1)[1]
-            assert target in all_names
-            m.linkname=os.path.relpath(target,os.path.dirname(m.name))
-            repairs.append({'path':m.name,'relative_target':m.linkname})
-        return tarfile.data_filter(m,d)
-    t.extractall(k/'drivers/staging',filter=checked)
+    members=t.getmembers();byname={m.name.rstrip('/'):m for m in members}
+    if len(byname)!=len(members):raise ValueError('duplicate archive member')
+    for m in members:
+        if not (m.isfile() or m.isdir() or m.issym()):raise ValueError('unsupported archive member')
+    t.extractall(destination,members=[m for m in members if not m.issym()],filter='data')
+    for m in members:
+        if not m.issym():continue
+        marker='/vendor/qcom/opensource/wlan/'
+        if marker not in m.linkname:raise ValueError('unexpected link prefix')
+        target=m.linkname.split(marker,1)[1]
+        if target not in byname or byname[target].issym():raise ValueError('unverified link target')
+        src=destination/m.name;dst=destination/target
+        if not src.parent.resolve().is_relative_to(destination) or not dst.resolve().is_relative_to(destination):raise ValueError('link escapes archive')
+        if src.exists() or src.is_symlink():raise ValueError('existing link destination')
+        if not dst.exists():raise ValueError('missing link target')
+        rel=os.path.relpath(dst,src.parent);src.symlink_to(rel)
+        if src.resolve()!=dst.resolve():raise ValueError('mismatched restored link')
+        repairs.append({'path':m.name,'relative_target':rel})
+assert len(repairs)==22
+for name in ['qcacld-3.0','qca-wifi-host-cmn','fw-api']:
+    dest=k/'drivers/staging'/name
+    assert not dest.exists() and not dest.is_symlink(),str(dest)
+    shutil.copytree(destination/name,dest,symlinks=True)
 p=k/'techpack/audio/config/konaauto.conf'; s=p.read_text()
 assert len(re.findall(r'=m$',s,re.M))==41
 p.write_text(re.sub(r'=m$', '=y',s,flags=re.M))
@@ -66,7 +80,8 @@ p=k/'techpack/audio/asoc/codecs/Kbuild';s=p.read_text()
 assert 'obj-y\t+= wcd938x/' in s
 s=s.replace('obj-y\t+= wcd938x/','obj-y\t+= wcd938x/\n\tobj-y\t+= tfa98xx/')
 p.write_text(s)
-p=k/'techpack/audio/Makefile';s=p.read_text();s=s.replace('obj-y += elliptic/\n','');p.write_text(s)
+p=k/'techpack/audio/Makefile';s=p.read_text();assert s.count('obj-y += dsp/elliptic\n')==1
+p.write_text(s.replace('obj-y += dsp/elliptic\n',''))
 p=k/'drivers/staging/qcacld-3.0/Kbuild';s=p.read_text()
 assert 'WLAN_ROOT := drivers/staging/qcacld-3.0' in s
 s=s.replace('WLAN_ROOT := drivers/staging/qcacld-3.0','WLAN_ROOT := $(srctree)/drivers/staging/qcacld-3.0')
@@ -78,9 +93,9 @@ p.write_text(s.replace('endif # STAGING','source "drivers/staging/qcacld-3.0/Kco
 p=k/'techpack/camera';assert not p.exists() and not p.is_symlink();p.symlink_to('camera-dxo')
 for name in ['kperfevents.h','misysinfofreader.h']:
     p=k/'include/linux'/name
-    if p.is_symlink():
-        p.unlink();p.symlink_to('../dum/'+name)
-    assert p.is_file()
+    if p.is_symlink():p.unlink()
+    if not p.exists():p.symlink_to('../dum/'+name)
+    assert p.is_file(),str(p)
 (pathlib.Path(os.environ['GITHUB_WORKSPACE'])/'driver-results/source-assembly.json').write_text(json.dumps({'audio_config_m_to_y':41,'wlan_profile':'qca6390','absolute_links_repaired':repairs,'sukisu_included':False,'phone_write':False},indent=2))
 PY
 export ARCH=arm64 TARGET_PRODUCT=cmi TARGET_BUILD_VARIANT=user
