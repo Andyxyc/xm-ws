@@ -1,0 +1,39 @@
+name: CMI host build tools
+on:
+  push:
+    branches: [cmi-miui12510-driver-build-20261019]
+    paths: ['.github/workflows/cmi-host-tools.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: cmi-host-tools-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  packages:
+    name: 获取公开主机工具
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - name: 从Ubuntu软件源取得构建依赖
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/cmi-miui12510-driver-build-20261019
+          mkdir -p "$GITHUB_WORKSPACE/host-debs"
+          cd "$GITHUB_WORKSPACE/host-debs"
+          sudo apt-get update
+          apt-get download flex bison bc libfl2 libtinfo5 libncurses5
+          for file in ./*.deb; do
+            dpkg-deb -f "$file" Package Version Architecture >> PACKAGES.txt
+          done
+          sha256sum ./*.deb > SHA256SUMS
+          printf 'Original public Ubuntu 22.04 packages acquired through APT; no kernel or custom source.\n' > README.txt
+      - name: 保存公开工具包
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cmi-host-tools-${{ github.run_id }}
+          path: host-debs/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
