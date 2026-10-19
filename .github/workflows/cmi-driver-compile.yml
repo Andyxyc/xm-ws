@@ -2,7 +2,7 @@ name: CMI audio and WLAN kernel build
 on:
   push:
     branches: [cmi-miui12510-driver-build-20261019]
-    paths: ['build-cmi-drivers.sh', 'repair-cmi-wlan.py', 'repair-cmi-sysfs.py', '.github/workflows/cmi-driver-compile.yml']
+    paths: ['build-cmi-drivers.sh', 'repair-cmi-wlan.py', 'repair-cmi-sysfs.py', 'repair-cmi-link.py', '.github/workflows/cmi-driver-compile.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -34,7 +34,7 @@ jobs:
           CMI_HOST_SANITIZERS: address,undefined
         run: |
           set -euo pipefail
-          python3 -m py_compile repair-cmi-wlan.py repair-cmi-sysfs.py
+          python3 -m py_compile repair-cmi-wlan.py repair-cmi-sysfs.py repair-cmi-link.py
           python3 - <<'PY'
           from pathlib import Path
           p = Path('build-cmi-drivers.sh')
@@ -44,27 +44,43 @@ jobs:
               raise SystemExit('build entry changed; inspect before applying repair')
           repair = 'python3 "$ROOT/repair-cmi-wlan.py" "$WORK/kernel" "$ROOT/driver-results"\n'
           repair += 'python3 "$ROOT/repair-cmi-sysfs.py" "$WORK/kernel" "$ROOT/driver-results"\n'
+          repair += 'python3 "$ROOT/repair-cmi-link.py" apply "$WORK/kernel" "$ROOT/driver-results"\n'
           p.write_text(source.replace(anchor, repair + anchor))
           PY
           bash -n build-cmi-drivers.sh
           bash build-cmi-drivers.sh
+      - name: 核验最终链接与产物
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 repair-cmi-link.py verify "$RUNNER_TEMP/cmi-driver-baseline/out" "$GITHUB_WORKSPACE/driver-results"
       - name: 保存实际入口及错误摘要
         if: always()
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p driver-results
-          cp build-cmi-drivers.sh repair-cmi-wlan.py repair-cmi-sysfs.py driver-results/
+          cp build-cmi-drivers.sh repair-cmi-wlan.py repair-cmi-sysfs.py repair-cmi-link.py driver-results/
           python3 - <<'PY'
+          import json
+          import os
           from pathlib import Path
           p = Path('driver-results/build.log')
+          errors = []
           if p.exists():
               lines = p.read_text(errors='replace').splitlines()
               needles = ('error:', 'error ', 'traceback', 'undefined reference', 'multiple definition', 'runtimeerror', 'assertionerror', 'version generation failed')
               errors = list(dict.fromkeys(s for s in lines if any(n in s.lower() for n in needles)))
               Path('driver-results/error-summary.txt').write_text('\n'.join(errors[-40:]) + '\n')
-              with open(__import__('os').environ['GITHUB_STEP_SUMMARY'], 'a') as f:
-                  f.write('### Build diagnostics (not a flashable release)\n```text\n' + '\n'.join(errors[-20:]) + '\n```\n')
+          report = Path('driver-results/kernel-link-verification.json')
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as f:
+              if report.exists():
+                  verified = json.loads(report.read_text())
+                  f.write('### 驱动基线链接核验\n' + verified['kernel_link'] + '\n\n')
+                  f.write('该基线不含 SukiSU / SUSFS，不是刷机包，尚未实机测试。\n\n')
+              else:
+                  f.write('### 未完成最终链接核验\n\n')
+              f.write('```text\n' + '\n'.join(errors[-20:]) + '\n```\n')
           PY
       - name: 保存完整日志与可得产物
         if: always()
