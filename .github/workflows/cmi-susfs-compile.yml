@@ -4,6 +4,7 @@ on:
     branches: [cmi-miui12510-driver-build-20261019]
     paths:
       - ci/cmi/susfs-port-compile.py
+      - ci/cmi/verify-susfs-hooks.py
       - .github/workflows/cmi-susfs-compile.yml
   workflow_dispatch:
 permissions:
@@ -72,6 +73,7 @@ jobs:
           set -euo pipefail
           python3 repair-cmi-link.py verify "$RUNNER_TEMP/cmi-susfs-compile/out" "$GITHUB_WORKSPACE/driver-results"
           python3 ci/cmi/susfs-port-compile.py verify "$RUNNER_TEMP/cmi-susfs-compile/out" "$GITHUB_WORKSPACE/driver-results"
+          python3 ci/cmi/verify-susfs-hooks.py "$RUNNER_TEMP/cmi-susfs-compile/out" "$GITHUB_WORKSPACE/driver-results"
           grep -x CONFIG_KSU=y driver-results/kernel.config
           grep -x CONFIG_KSU_SUSFS=y driver-results/kernel.config
           printf 'Experimental SUSFS v1.5.5 core compiled. Phone and tool protocol untested. NEVER FLASH.\n' > driver-results/NOT_FLASHABLE.txt
