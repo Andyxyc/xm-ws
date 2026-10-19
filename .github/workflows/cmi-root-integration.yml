@@ -61,7 +61,13 @@ jobs:
           anchor = '"${MAKE[@]}" Image.gz\n'
           if source.count(anchor) != 1:
               raise SystemExit('Ambiguous image build boundary')
-          source = source.replace(anchor, '"${MAKE[@]}" drivers/kernelsu/ksu.o\n' + anchor)
+          # MiCode init/Makefile declares compile.h as a prerequisite of version.o.
+          # Use that real Kbuild rule; never fabricate generated build headers.
+          probe = '"${MAKE[@]}" init/version.o\n'
+          probe += 'test -s "$WORK/out/include/generated/compile.h"\n'
+          probe += 'cp "$WORK/out/include/generated/compile.h" "$ROOT/driver-results/compile.h"\n'
+          probe += '"${MAKE[@]}" drivers/kernelsu/ksu.o\n'
+          source = source.replace(anchor, probe + anchor)
           source = source.replace('cmi-driver-baseline', 'cmi-root-integration')
           source = source.replace('driver baseline. Not flashable.', 'SukiSU integration stage. Not flashable.')
           source = source.replace("'sukisu_included':False", "'sukisu_included':True,'susfs_runtime_included':False")
@@ -75,6 +81,20 @@ jobs:
           set -euo pipefail
           python3 repair-cmi-link.py verify "$RUNNER_TEMP/cmi-root-integration/out" "$GITHUB_WORKSPACE/driver-results"
           python3 ci/cmi/prepare-root-integration.py verify "$RUNNER_TEMP/cmi-root-integration/out" "$GITHUB_WORKSPACE/driver-results"
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path('driver-results')
+          evidence = json.loads((root / 'root-integration.json').read_text())
+          if evidence.get('sukisu_full_link') != 'passed':
+              raise SystemExit('Missing verified SukiSU link evidence')
+          report = root / 'kernel-link-verification.json'
+          data = json.loads(report.read_text())
+          data['sukisu_included'] = True
+          data['susfs_included'] = False
+          data['root_inclusion_evidence'] = 'root-integration.json'
+          report.write_text(json.dumps(data, indent=2) + '\n')
+          PY
       - name: 保留准确阶段及诊断
         if: always()
         shell: bash
@@ -93,6 +113,10 @@ jobs:
           errors = [line for line in lines if any(word in line.lower() for word in needles)]
           (root / 'error-summary.txt').write_text('\n'.join(errors[-80:]) + '\n')
           print('\n'.join(errors[-80:]))
+          applicability = root / 'susfs-apply-check.log'
+          if applicability.exists():
+              print('SUSFS upstream patch applicability:')
+              print(applicability.read_text())
           report = root / 'root-integration.json'
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out:
               out.write('### 小米10Pro Root整合阶段\n\n')
