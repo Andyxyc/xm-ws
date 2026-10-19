@@ -1,0 +1,41 @@
+{
+  "device": "cmi",
+  "target_rom": "V12.5.10.0.RJACNXM",
+  "branch": "cmi-miui12510-driver-build-20261019",
+  "phase": "public_dependencies_verified",
+  "full_kernel_build_started": false,
+  "new_kernel_image_produced": false,
+  "flashable_package_produced": false,
+  "device_testing_performed": false,
+  "custom_kernel_patch_set_present_in_repository": false,
+  "runs": {
+    "previous_archive_sha_check": {"id": 39251564231, "conclusion": "failure"},
+    "pinned_public_dependencies_and_aarch64_probe": {"id": 39252875469, "conclusion": "success"},
+    "host_parser_tools_and_runtime_packages": {"id": 39253091970, "conclusion": "success"},
+    "lossless_public_dependency_transfer_parts": {"id": 39254752540, "conclusion": "success"}
+  },
+  "compiler": {
+    "revision": "clang-r377782c",
+    "version_required_and_probed": "10.0.5",
+    "source_ref": "refs/tags/android-11.0.0_r3",
+    "pinned_git_subtree": "4c73695e3f20f85d0e50b3001806cff59bf7f3dc",
+    "validation": "Recomputed every archived Git blob and tree, including executable modes and symlinks, before running the compiler. Original moving-branch archive SHA failure remains in run history."
+  },
+  "public_dependency_artifact": {
+    "id": 12186620532,
+    "size_bytes": 384718312,
+    "sha256": "4d972ff96e5b79922982da0234d583a2ed9aad9c95dfa3cc9ecd6543fe8307e0",
+    "parts": [
+      {"part": 0, "artifact_id": 12187347902},
+      {"part": 1, "artifact_id": 12186478713},
+      {"part": 2, "artifact_id": 12187282892},
+      {"part": 3, "artifact_id": 12188010521},
+      {"part": 4, "artifact_id": 12187646298},
+      {"part": 5, "artifact_id": 12186483702}
+    ],
+    "instructions": "Extract each part artifact, then concatenate cmi-public-deps.zip.part-00 through part-05 in order. Verify the reassembled ZIP size and SHA256 above. All six parts are required."
+  },
+  "host_tool_artifact": {"id": 12185944296, "size_bytes": 1362498, "sha256": "6963da900dafc2d9e7fc71e77a974d93733aa95308a44ec169f6545e360611d7"},
+  "artifact_retention_days": 1,
+  "remaining_build_stage": "Compile and link the separately maintained cmi source and driver changes in a working execution environment; verify actual driver initialization and device behavior before claiming a flashable kernel."
+}
