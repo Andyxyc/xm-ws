@@ -1,5 +1,12 @@
-# xm-ws
+# 小米 10 Pro 内核构建
 
-Build workspace.
+目标：cmi / 国行 MIUI V12.5.10.0.RJACNXM / Android 11。
+作者：闲鱼 心中都是莫（xiaomo）。
 
-See `NOTICE.md` and `LICENSE` for upstream attribution and licensing.
+这是独立的源码构建分支，只存放 cmi 的构建脚本、公开上游版本锁和适配补丁。默认分支及其他机型的构建配置不在这里修改；不要将本分支整树合并回默认分支。
+
+当前接续：小米官方 cmi-r-oss、SukiSU 41023 固定开发快照、SUSFS 1.5.5、音频内建 v0.2 补丁。KPM 关闭。QCA6390 使用同代小米公开驱动源码进行构建检查。
+
+编译成功只证明源码能生成产物，不代表已经通过实机启动和稳定性测试。此阶段输出属于开发检查材料，尚未形成可直接刷入的 AK3 包。
+
+构建仅使用 GitHub 标准 Ubuntu 运行器，不需要仓库机密，不执行设备操作，也不自动发布 Release。
