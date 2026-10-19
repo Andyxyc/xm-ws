@@ -41,7 +41,7 @@ jobs:
           anchor='"${MAKE[@]}" Image.gz\n'.replace("$", "$")
           assert s.count(anchor)==1
           before=s[:s.index(anchor)]
-          end='''"${MAKE[@]}" dtbs
+          end='''"${MAKE[@]}" arch/arm64/boot/dts/vendor/qcom/kona.dtb arch/arm64/boot/dts/vendor/qcom/cmi-sm8250-overlay.dtbo
           mkdir -p "$ROOT/driver-results/cmi-device-trees"
           find "$WORK/out/arch/arm64/boot/dts" -type f -name '*.dtb' -size +0c | sort > "$ROOT/driver-results/compiled-dtbs.txt"
           find "$WORK/out/arch/arm64/boot/dts" -type f -name '*.dtbo' -size +0c | sort > "$ROOT/driver-results/compiled-dtbos.txt"
