@@ -1,0 +1,45 @@
+name: CMI audio and WLAN kernel build
+on:
+  push:
+    branches: [cmi-miui12510-driver-build-20261019]
+    paths: ['build-cmi-drivers.sh', '.github/workflows/cmi-driver-compile.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: cmi-driver-baseline-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  kernel:
+    name: 小米10Pro音频与无线驱动整核编译
+    if: github.ref == 'refs/heads/cmi-miui12510-driver-build-20261019'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: 安装编译依赖
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential git curl unzip bc bison flex libssl-dev libelf-dev libtinfo5 libncurses5 python3 python-is-python3 cpio rsync
+      - name: 校验固定源码并实际编译
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bash -n build-cmi-drivers.sh
+          bash build-cmi-drivers.sh
+      - name: 保存完整日志与可得产物
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cmi-driver-baseline-${{ github.run_id }}
+          path: driver-results/
+          if-no-files-found: warn
+          compression-level: 1
+          retention-days: 3
