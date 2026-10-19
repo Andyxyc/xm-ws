@@ -2,7 +2,7 @@ name: CMI audio and WLAN kernel build
 on:
   push:
     branches: [cmi-miui12510-driver-build-20261019]
-    paths: ['build-cmi-drivers.sh', 'repair-cmi-wlan.py', '.github/workflows/cmi-driver-compile.yml']
+    paths: ['build-cmi-drivers.sh', 'repair-cmi-wlan.py', 'repair-cmi-sysfs.py', '.github/workflows/cmi-driver-compile.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -31,9 +31,10 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          CMI_HOST_SANITIZERS: address,undefined
         run: |
           set -euo pipefail
-          python3 -m py_compile repair-cmi-wlan.py
+          python3 -m py_compile repair-cmi-wlan.py repair-cmi-sysfs.py
           python3 - <<'PY'
           from pathlib import Path
           p = Path('build-cmi-drivers.sh')
@@ -42,6 +43,7 @@ jobs:
           if source.count(anchor) != 1:
               raise SystemExit('build entry changed; inspect before applying repair')
           repair = 'python3 "$ROOT/repair-cmi-wlan.py" "$WORK/kernel" "$ROOT/driver-results"\n'
+          repair += 'python3 "$ROOT/repair-cmi-sysfs.py" "$WORK/kernel" "$ROOT/driver-results"\n'
           p.write_text(source.replace(anchor, repair + anchor))
           PY
           bash -n build-cmi-drivers.sh
@@ -52,13 +54,14 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p driver-results
-          cp build-cmi-drivers.sh repair-cmi-wlan.py driver-results/
+          cp build-cmi-drivers.sh repair-cmi-wlan.py repair-cmi-sysfs.py driver-results/
           python3 - <<'PY'
           from pathlib import Path
           p = Path('driver-results/build.log')
           if p.exists():
               lines = p.read_text(errors='replace').splitlines()
-              errors = [s for s in lines if 'error:' in s.lower() or 'Error ' in s or 'Traceback' in s]
+              needles = ('error:', 'error ', 'traceback', 'undefined reference', 'multiple definition', 'runtimeerror', 'assertionerror', 'version generation failed')
+              errors = list(dict.fromkeys(s for s in lines if any(n in s.lower() for n in needles)))
               Path('driver-results/error-summary.txt').write_text('\n'.join(errors[-40:]) + '\n')
               with open(__import__('os').environ['GITHUB_STEP_SUMMARY'], 'a') as f:
                   f.write('### Build diagnostics (not a flashable release)\n```text\n' + '\n'.join(errors[-20:]) + '\n```\n')
