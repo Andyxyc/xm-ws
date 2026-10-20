@@ -70,6 +70,29 @@ def verify(out,res):
        "sukisu_manager_runtime":"not_tested","SUSFS_control_api":"not_tested",
        "actual_cmi_boot":"not_tested","flashable":False
     }
+    # Source-assembly stage creates a generic "driver only" link report with
+    # pre-integration defaults. Replace those booleans only *after* verifying
+    # the real AArch64 caller relocations and final linked implementations.
+    link_report=res/"kernel-link-verification.json"
+    if not link_report.is_file():
+        raise RuntimeError("Missing original kernel-link verification report")
+    prior=json.loads(link_report.read_text())
+    if prior.get("kernel_link")!="passed" or prior.get("aarch64_elf") is not True:
+        raise RuntimeError("Kernel link baseline not verified")
+    prior.update({
+       "sukisu_included":True,"susfs_included":True,
+       "actual_ksu_arm64_hook_relocations":"passed",
+       "actual_susfs_arm64_hook_relocations":"passed",
+       "SUSFS_legacy_prctl":"subset_compiled_not_runtime_tested",
+       "vendor_module_crc_compatible":"not_verified",
+       "phone_runtime":"not_tested","flashable_package":False})
+    link_report.write_text(json.dumps(prior,ensure_ascii=False,indent=2)+"\n")
+    manual=res/"manual-hooks-result.json"
+    if manual.is_file():
+        payload=json.loads(manual.read_text())
+        payload["real_arm64_object_relocations"]="passed"
+        payload["SUSFS_runtime"]="not_tested"
+        manual.write_text(json.dumps(payload,ensure_ascii=False,indent=2)+"\n")
     (res/"cmi-dual-verify.json").write_text(json.dumps(evidence,ensure_ascii=False,indent=2)+"\n")
     print("SukiSU call relocations + real SUSFS ARM64 symbols passed. Not device-safe.")
 if __name__=="__main__":
