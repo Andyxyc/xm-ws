@@ -151,7 +151,8 @@ def summarize_android_boot(data):
 def summarize_dtbo(data):
     report = {'sha256': hashlib.sha256(data).hexdigest(), 'bytes': len(data)}
     if len(data) < 32: raise RuntimeError('Stock dtbo.img is too small')
-    words = struct.unpack_from('<8I', data)
+    # Android libufdt/mkdtboimg.py serializes DT table fields big-endian.
+    words = struct.unpack_from('>8I', data)
     if words[0] != 0xd7b7ab1e:
         raise RuntimeError('Stock dtbo.img lacks Android DT table magic')
     _, total, header_size, entry_size, count, entry_offset, page_size, version = words
@@ -162,7 +163,7 @@ def summarize_dtbo(data):
     overlays = []
     for i in range(count):
         off = entry_offset + i*entry_size
-        sz, blob_off, mid, rev = struct.unpack_from('<4I', data, off)
+        sz, blob_off, mid, rev = struct.unpack_from('>4I', data, off)
         if sz < 40 or blob_off + sz > len(data) or data[blob_off:blob_off+4] != bytes.fromhex('d00dfeed'):
             raise RuntimeError(f'Stock dtbo entry {i} invalid FDT or bounds')
         overlays.append({'entry': i, 'id': mid, 'rev': rev, 'sha256': hashlib.sha256(data[blob_off:blob_off+sz]).hexdigest(), 'size': sz})
