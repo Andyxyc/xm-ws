@@ -83,7 +83,9 @@ class RemoteRange(io.RawIOBase):
 
     def read(self, n=-1):
         if n == -1:
-            raise RuntimeError('Unbounded archive read refused')
+            n = self.size - self.offset
+            if n > 4 * CHUNK:
+                raise RuntimeError('Unbounded archive read refused')
         if n < 0: raise ValueError('Negative count')
         remaining = min(n, max(0, self.size - self.offset))
         blocks = []
