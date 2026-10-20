@@ -74,6 +74,94 @@ def apply(k,r):
     p=su/"ksu.c"
     replace(p,'#include "kernel_includes.h"\n',
             '#include "kernel_includes.h"\n#ifdef CONFIG_KSU_SUSFS\n#include <linux/susfs.h>\n#endif\n')
+    # Preserve the vendor kernel's LSM prctl checks and legacy userspace ABI.
+    # The bridge is part of this experimental 4.19 build, never the A build.
+    sysc = k/"kernel/sys.c"
+    text = sysc.read_text()
+    signature=("SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,\n"
+               "\t\tunsigned long, arg4, unsigned long, arg5)\n")
+    entry=("#if defined(CONFIG_KSU) && defined(CONFIG_KSU_SUSFS)\n"
+           "extern long cmi_susfs_legacy_prctl(unsigned long, unsigned long,\n"
+           "                                    unsigned long, unsigned long);\n"
+           "#endif\n")
+    lsm=("\terror = security_task_prctl(option, arg2, arg3, arg4, arg5);\n"
+         "\tif (error != -ENOSYS)\n\t\treturn error;\n")
+    invoke=("\n#if defined(CONFIG_KSU) && defined(CONFIG_KSU_SUSFS)\n"
+            "\tif (option == 0xDEADBEEF)\n"
+            "\t\treturn cmi_susfs_legacy_prctl(arg2, arg3, arg4, arg5);\n"
+            "#endif\n")
+    if text.count(signature)!=1 or text.count(lsm)!=1 or "cmi_susfs_legacy_prctl" in text:
+        raise RuntimeError("Legacy prctl source anchors changed or patch already applied")
+    sysc.write_text(text.replace(signature,entry+signature,1).replace(lsm,lsm+invoke,1))
+    makefile=k/"fs/Makefile"
+    replace(makefile,"obj-$(CONFIG_KSU_SUSFS) += susfs.o\n",
+            "obj-$(CONFIG_KSU_SUSFS) += susfs.o cmi_susfs_legacy_prctl.o\n")
+    bridge=r'''// SPDX-License-Identifier: GPL-2.0-only
+// cmi 4.19 ONLY: opt-in, root-only SUSFS 1.5.5 prctl transport.
+// This intentionally does not enable the unsupported SUSFS hiding features.
+#include <linux/capability.h>
+#include <linux/cred.h>
+#include <linux/errno.h>
+#include <linux/susfs.h>
+#include <linux/susfs_def.h>
+#include <linux/uaccess.h>
+#include <linux/compiler.h>
+
+#ifdef CONFIG_KSU_SUSFS_ENABLE_LOG
+extern bool susfs_is_log_enabled;
+#endif
+
+long cmi_susfs_legacy_prctl(unsigned long command, unsigned long arg3,
+                           unsigned long arg4, unsigned long arg5)
+{
+    int result = -1; /* Legacy CLI uses this output for unsupported commands. */
+
+    if (current_uid().val != 0 || !capable(CAP_SYS_ADMIN))
+        return -EPERM;
+    if (!arg5 || arg4)
+        return -EINVAL;
+
+    switch (command) {
+#ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
+    case CMD_SUSFS_SET_UNAME:
+        result = susfs_set_uname((struct st_susfs_uname __user *)arg3);
+        break;
+#endif
+#ifdef CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+    case CMD_SUSFS_SET_CMDLINE_OR_BOOTCONFIG:
+        result = susfs_set_cmdline_or_bootconfig((char __user *)arg3);
+        break;
+#endif
+#ifdef CONFIG_KSU_SUSFS_ENABLE_LOG
+    case CMD_SUSFS_ENABLE_LOG:
+        if (arg3 > 1)
+            result = -EINVAL;
+        else {
+            WRITE_ONCE(susfs_is_log_enabled, arg3 != 0);
+            result = 0;
+        }
+        break;
+#endif
+    case CMD_SUSFS_SHOW_VERSION:
+        result = copy_to_user((void __user *)arg3, SUSFS_VERSION,
+                              sizeof(SUSFS_VERSION)) ? -EFAULT : 0;
+        break;
+    case CMD_SUSFS_SHOW_VARIANT:
+        result = copy_to_user((void __user *)arg3, SUSFS_VARIANT,
+                              sizeof(SUSFS_VARIANT)) ? -EFAULT : 0;
+        break;
+    default:
+        break; /* Unknown or disabled operation: never silently succeed. */
+    }
+    return put_user(result, (int __user *)arg5) ? -EFAULT : 0;
+}
+'''
+    (k/"fs/cmi_susfs_legacy_prctl.c").write_text(bridge)
+    (r/"cmi-susfs-legacy-prctl.patch").write_text(
+        "Reviewed, guarded source edits:\n"
+        "kernel/sys.c: prctl after LSM check, root-only SUSFS 1.5.5 ABI\n"
+        "fs/Makefile: build cmi_susfs_legacy_prctl.o with CONFIG_KSU_SUSFS\n"
+        "fs/cmi_susfs_legacy_prctl.c: real uname/cmdline/log operations; no fake hiding\n")
     report={"rom":"V12.5.10.0.RJACNXM","device":"cmi","susfs":"1.5.5 NON-GKI",
       "rejected_original_hunks":sorted(observed),
       "unsafe_fdinfo_hunk_skipped":True,
@@ -82,7 +170,7 @@ def apply(k,r):
       "compile_features":["SPOOF_UNAME","SPOOF_CMDLINE_OR_BOOTCONFIG","ENABLE_LOG"],
       "disabled_features":["SUS_PATH","SUS_MOUNT","SUS_KSTAT","OPEN_REDIRECT","SUS_MAP"],
       "build_result":"pending","runtime_control_api":"not_verified",
-      "stock_vendor_abi":"not_verified","flashable":False}
+      "stock_vendor_abi":"not_verified","flashable":False,"legacy_prctl_bridge":"pending"}
     (r/"susfs-legacy-experiment.json").write_text(json.dumps(report,ensure_ascii=False,indent=2)+"\n")
     print("CMI 4.19 legacy SUSFS code installed for compiler test. No writable image.")
 def verify(out,r):
@@ -98,8 +186,22 @@ def verify(out,r):
     for name in names:
         if not re.search(r"\b[Tt]\s+"+name+r"$",symbols,re.M):
             raise RuntimeError("Unlinked SUSFS function "+name)
+    # Both callers must have genuine ARM64 unresolved relocations, and final
+    # vmlinux must define the bridge; source text matches alone are insufficient.
+    import subprocess
+    readnm=lambda path:subprocess.run(
+        ["nm","-u",str(path)],capture_output=True,text=True,check=True,timeout=30).stdout
+    if not re.search(r"\bU\s+cmi_susfs_legacy_prctl$",readnm(out/"kernel/sys.o"),re.M):
+        raise RuntimeError("No kernel/sys.o legacy prctl relocation")
+    bridgeobj=out/"fs/cmi_susfs_legacy_prctl.o"
+    bridge_symbols=readnm(bridgeobj)
+    for sym in ("susfs_set_uname","susfs_set_cmdline_or_bootconfig"):
+        if not re.search(r"\bU\s+"+sym+r"$",bridge_symbols,re.M):
+            raise RuntimeError("No real legacy bridge relocation to "+sym)
+    if not re.search(r"\b[Tt]\s+cmi_susfs_legacy_prctl$",symbols,re.M):
+        raise RuntimeError("Legacy prctl bridge missing from final vmlinux")
     p=r/"susfs-legacy-experiment.json";result=json.loads(p.read_text())
-    result["build_result"]="linked";result["linked_functions"]=list(names)
+    result["build_result"]="linked";result["linked_functions"]=list(names);result["legacy_prctl_bridge"]="arm64_objects_and_final_link_passed_runtime_not_tested"
     p.write_text(json.dumps(result,ensure_ascii=False,indent=2)+"\n")
     print("Experimental SUSFS core symbols linked, but userspace control and device boot unverified.")
 if __name__=="__main__":
