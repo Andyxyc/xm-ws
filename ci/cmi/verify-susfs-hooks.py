@@ -14,6 +14,10 @@ ROOT_CALLS={
     "kernel/reboot.o":["ksu_handle_sys_reboot"],
 }
 SUSFS_SYMBOLS=("susfs_init","susfs_spoof_uname","susfs_set_uname","susfs_spoof_cmdline_or_bootconfig")
+SUSFS_CALLS={
+    "kernel/sys.o":["susfs_spoof_uname","cmi_susfs_legacy_prctl"],
+    "fs/proc/cmdline.o":["susfs_spoof_cmdline_or_bootconfig"],
+}
 def run(args):
     return subprocess.run(args,check=True,capture_output=True,text=True,timeout=30).stdout
 def verify(out,res):
@@ -40,11 +44,27 @@ def verify(out,res):
                 raise RuntimeError("Missing linked SukiSU implementation: "+name)
         paths[rel]={"sha256":hashlib.sha256(obj.read_bytes()).hexdigest(),
                     "actual_undefined_hooks":names}
+    # Symbols merely present in System.map do not prove the hook callsites run.
+    # Require actual ARM64 relocations from uname/cmdline/prctl implementations.
+    susfs_callers={}
+    for rel,names in SUSFS_CALLS.items():
+        obj=out/rel
+        if "AArch64" not in run(["readelf","-h",str(obj)]):
+            raise RuntimeError("Not ARM64 SUSFS caller: "+rel)
+        undefined=run(["nm","-u",str(obj)])
+        for name in names:
+            if not re.search(r"\\bU\\s+"+name+r"$",undefined,re.M):
+                raise RuntimeError("Missing real SUSFS relocation: "+rel+":"+name)
+            if not re.search(r"\\b[Tt]\\s+"+name+r"$",sysmap,re.M):
+                raise RuntimeError("SUSFS call target missing in vmlinux: "+name)
+        susfs_callers[rel]={"sha256":hashlib.sha256(obj.read_bytes()).hexdigest(),
+                            "actual_undefined_hooks":names}
     susobj=out/"fs/susfs.o"
     if not susobj.is_file() or "AArch64" not in run(["readelf","-h",str(susobj)]):
         raise RuntimeError("Missing real SUSFS ARM64 object")
     evidence={
-       "root_hook_objects":paths,"susfs_arm64_object_sha256":hashlib.sha256(susobj.read_bytes()).hexdigest(),
+       "root_hook_objects":paths,"susfs_kernel_call_objects":susfs_callers,
+       "susfs_arm64_object_sha256":hashlib.sha256(susobj.read_bytes()).hexdigest(),
        "linked_susfs_symbols":list(SUSFS_SYMBOLS),"root_and_susfs_link":"passed",
        "config_checked":True,"vendor_module_crc_compatible":"unknown",
        "sukisu_manager_runtime":"not_tested","SUSFS_control_api":"not_tested",
