@@ -1,0 +1,45 @@
+name: CMI stock camera ABI inspection
+on:
+  push:
+    branches: [cmi-miui12510-driver-build-20261019]
+    paths:
+      - ci/cmi/camera-vendor-reference.py
+      - .github/workflows/cmi-camera-vendor-abi.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: cmi-camera-vendor-abi-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  inspect:
+    if: github.ref == 'refs/heads/cmi-miui12510-driver-build-20261019'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Prepare read-only tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends brotli e2fsprogs
+          python3 -m pip install capstone==5.0.3 pyelftools==0.32
+          python3 -m py_compile ci/cmi/camera-vendor-reference.py
+      - name: Inspect official vendor camera argument layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -u ci/cmi/camera-vendor-reference.py
+      - name: Save limited ABI evidence only
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cmi-camera-vendor-abi-${{ github.run_id }}
+          path: |
+            camera-reference/*.json
+            camera-reference/*.asm
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 6
