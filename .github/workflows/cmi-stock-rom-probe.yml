@@ -1,0 +1,53 @@
+name: CMI exact MIUI stock boot and DTBO reference probe
+on:
+  push:
+    branches: [cmi-miui12510-driver-build-20261019]
+    paths:
+      - ci/cmi/stock-rom-probe.py
+      - .github/workflows/cmi-stock-rom-probe.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  stockprobe:
+    name: 只读核对国行MIUI12510原厂boot与dtbo
+    if: github.ref == 'refs/heads/cmi-miui12510-driver-build-20261019'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: 核对脚本并下载现有设备树验证结果
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 -m py_compile ci/cmi/stock-rom-probe.py
+          mkdir -p stock-ref/dt stock-ref/report
+          gh run download 39323540324 --repo Andyxyc/xm-ws --name cmi-device-tree-39323540324 --dir stock-ref/dt
+          test -s stock-ref/dt/cmi-device-trees/cmi-sm8250-overlay.dtbo
+          test -s stock-ref/dt/cmi-device-trees/kona.dtb
+          test -s stock-ref/dt/device-tree-verification.json
+      - name: 使用HTTP Range只读探测固定官方ROM
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 ci/cmi/stock-rom-probe.py stock-ref/dt stock-ref/report
+      - name: 保存证据及明确剩余验证
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p stock-ref/report
+          printf '%s\n' 'Host-side stock reference only. Never flash. No phone was accessed.' > stock-ref/report/NOT_FLASHABLE.txt
+          if test -s stock-ref/report/cmi-stock-rom-reference.json; then cat stock-ref/report/cmi-stock-rom-reference.json; fi
+      - name: 上传非私密核对报告
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cmi-stock-reference-${{ github.run_id }}
+          path: stock-ref/report/
+          if-no-files-found: error
+          retention-days: 7
