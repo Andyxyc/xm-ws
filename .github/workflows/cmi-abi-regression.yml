@@ -1,0 +1,53 @@
+name: CMI dual-variant ABI regression
+on:
+  push:
+    branches: [cmi-miui12510-driver-build-20261019]
+    paths:
+      - ci/cmi/compare-kernel-abis.py
+      - .github/workflows/cmi-abi-regression.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  abi:
+    if: github.ref == 'refs/heads/cmi-miui12510-driver-build-20261019'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: 下载真实两个整核编译产物
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 -m py_compile ci/cmi/compare-kernel-abis.py
+          mkdir -p abi-in/a abi-in/b abi-out
+          gh run download 39313741454 --repo Andyxyc/xm-ws --name cmi-root-integration-39313741454 --dir abi-in/a
+          gh run download 39323904314 --repo Andyxyc/xm-ws --name cmi-susfs-compile-39323904314 --dir abi-in/b
+          for x in a b; do
+            test -s "abi-in/$x/Image"
+            test -s "abi-in/$x/Module.symvers"
+            test -s "abi-in/$x/kernel.config"
+          done
+      - name: 验证A/B真实ARM64镜像和全部导出符号
+        run: |
+          set -euo pipefail
+          python3 ci/cmi/compare-kernel-abis.py abi-in/a abi-in/b abi-out
+      - name: 保存比较报告
+        if: always()
+        run: |
+          mkdir -p abi-out
+          printf 'Not proof of original MIUI vendor-module CRC match. No phone boot test.\n' > abi-out/NOT_FLASHABLE.txt
+          test ! -s abi-out/cmi-abi-compare.json || cat abi-out/cmi-abi-compare.json
+      - name: 上传非敏感验证记录
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cmi-abi-regression-${{ github.run_id }}
+          path: abi-out/
+          retention-days: 7
+          if-no-files-found: error
