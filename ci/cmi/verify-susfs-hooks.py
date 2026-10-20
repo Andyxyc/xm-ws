@@ -53,9 +53,9 @@ def verify(out,res):
             raise RuntimeError("Not ARM64 SUSFS caller: "+rel)
         undefined=run(["nm","-u",str(obj)])
         for name in names:
-            if not re.search(r"\\bU\\s+"+name+r"$",undefined,re.M):
+            if not re.search(r"\bU\s+"+name+r"$",undefined,re.M):
                 raise RuntimeError("Missing real SUSFS relocation: "+rel+":"+name)
-            if not re.search(r"\\b[Tt]\\s+"+name+r"$",sysmap,re.M):
+            if not re.search(r"\b[Tt]\s+"+name+r"$",sysmap,re.M):
                 raise RuntimeError("SUSFS call target missing in vmlinux: "+name)
         susfs_callers[rel]={"sha256":hashlib.sha256(obj.read_bytes()).hexdigest(),
                             "actual_undefined_hooks":names}
