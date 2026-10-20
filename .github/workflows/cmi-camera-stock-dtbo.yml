@@ -1,0 +1,71 @@
+name: CMI camera stock DTBO byte-evidence extraction
+on:
+  push:
+    branches: [cmi-miui12510-driver-build-20261019]
+    paths:
+      - .github/workflows/cmi-camera-stock-dtbo.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  extract:
+    if: github.ref == 'refs/heads/cmi-miui12510-driver-build-20261019'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Bounded read-only extraction from official exact cmi ROM
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p camera-stock
+          python3 - <<'PY'
+          import importlib.util, hashlib, json, struct, zipfile
+          from pathlib import Path
+          spec=importlib.util.spec_from_file_location('stock','ci/cmi/stock-rom-probe.py')
+          m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+          r=m.RemoteRange(m.OFFICIAL_ZIP)
+          version='V12.5.10.0.RJACNXM'
+          expected='039673aed5f5181bf94777e3b75d6531ea60f0daf1eb5c033ae3c22b17b0c582'
+          with zipfile.ZipFile(r) as z:
+              meta=z.read('META-INF/com/android/metadata').decode('utf-8','replace').splitlines()
+              if 'pre-device=cmi' not in meta or 'post-build-incremental='+version not in meta:
+                  raise RuntimeError('Source ROM metadata mismatch')
+              hits=[x for x in z.infolist() if x.filename=='firmware-update/dtbo.img']
+              if len(hits)!=1 or hits[0].file_size!=33554432:
+                  raise RuntimeError('Unexpected OEM DTBO member')
+              with z.open(hits[0]) as stream:
+                  raw=stream.read(33554433)
+          if len(raw)!=33554432 or hashlib.sha256(raw).hexdigest()!=expected:
+              raise RuntimeError('OEM DTBO sha256/size mismatch')
+          magic,total,hdr,ent,count,off,page,ver=struct.unpack_from('>8I',raw)
+          if (magic,total>=32,hdr,ent,count,off,page,ver)!=(0xd7b7ab1e,True,32,32,20,32,4096,0) or total>len(raw):
+              raise RuntimeError('Wrong OEM DTBO header')
+          entries=[]
+          for n in range(count):
+              size,start,mid,rev=struct.unpack_from('>4I',raw,off+n*ent)
+              if size<40 or start<32+count*ent or start+size>total or raw[start:start+4]!=bytes.fromhex('d00dfeed'):
+                  raise RuntimeError('Invalid overlay %d'%n)
+              if struct.unpack_from('>I',raw,start+4)[0]!=size:
+                  raise RuntimeError('Overlay size mismatch %d'%n)
+              entries.append({'index':n,'sha256':hashlib.sha256(raw[start:start+size]).hexdigest(),'size':size})
+          dst=Path('camera-stock/dtbo.img');dst.write_bytes(raw)
+          if hashlib.sha256(dst.read_bytes()).hexdigest()!=expected:
+              raise RuntimeError('OEM DTBO write/readback failure')
+          (Path('camera-stock')/'verification.json').write_text(json.dumps({
+              'device':'cmi','rom':version,'official_url':m.OFFICIAL_ZIP,
+              'dtbo_sha256':expected,'size':len(raw),'overlays':entries,
+              'zip_member_crc':'verified','whole_rom_digest':'not checked',
+              'phone_write':False,'actual_boot':'not tested'},indent=2)+'\n')
+          print('Read-only OEM DTBO extracted and SHA-256 verified: '+expected)
+          PY
+      - name: Preserve official DTBO evidence (short retention)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cmi-camera-stock-dtbo-${{ github.run_id }}
+          path: camera-stock/
+          if-no-files-found: error
+          compression-level: 5
+          retention-days: 1
