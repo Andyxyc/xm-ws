@@ -1,0 +1,37 @@
+name: Xiaomi14Pro SukiSU 41068 AK3
+run-name: Xiaomi14Pro-6.1.138-SukiSU41068-AnyKernel3-${{ github.run_id }}
+on:
+  push:
+    branches: [xiaomi14pro-sukisu-41068-20261024]
+    paths:
+      - .github/workflows/xiaomi14pro-sukisu41068-run.yml
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: write
+jobs:
+  build:
+    uses: ./.github/workflows/xiaomi14pro-sukisu41068-engine.yml
+    secrets: inherit
+    with:
+      android_version: android14
+      kernel_version: "6.1"
+      sub_level: "138"
+      os_patch_level: "2025-06"
+      ksu_variant: SukiSU
+      build_channel: "正式 (Release)"
+      ksu_commit: "d6b36700f3bd0a4c1585549b470dd30bb8774534"
+      version: "6.1.138-android14-11-g0c3d559bcd85-ab14529422"
+      build_time: "Wed Dec  3 02:05:30 UTC 2025"
+      use_zram: true
+      use_bbg: true
+      use_net_enhance: false
+      use_kpm: "enabled (开启)"
+      use_rekernel: false
+      cve_2026_43499_patch: false
+      enable_susfs: true
+      supp_op: false
+      droidspaces: "off"
+      droidspaces_ntsync: false
+      artifact_upload_mode: "仅上传 AnyKernel3.zip"
+      skip_incompatible: false
