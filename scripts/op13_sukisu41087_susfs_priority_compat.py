@@ -42,10 +42,12 @@ DISPATCH_NEW = (
 
 
 def blob(data: bytes) -> str:
-    return hashlib.sha1(b"blob " + str(len(data)).encode() + b"\\0" + data).hexdigest()
+    return hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest()
 
 
 def patch_exact(text: str, original: str, replacement: str) -> str:
+    if replacement in text:
+        raise ValueError("Compatibility guard already applied")
     if text.count(original) != 1:
         raise ValueError("Required upstream interface snippet missing or duplicated")
     return text.replace(original, replacement, 1)
@@ -58,7 +60,7 @@ def test() -> None:
     assert PKG_NEW.count("susfs_parse_priority_app_strings();") == 1
     assert DISPATCH_NEW.count("susfs_set_priority_uid_filter(arg);") == 1
     for orig, new in ((PKG_OLD, PKG_NEW), (DISPATCH_OLD, DISPATCH_NEW)):
-        assert patch_exact("prefix\\n" + orig + "suffix\\n", orig, new).startswith("prefix\\n")
+        assert patch_exact("prefix\n" + orig + "suffix\n", orig, new).startswith("prefix\n")
         try:
             patch_exact(new, orig, new)
             raise AssertionError("Idempotence check failed: patch may be re-applied")
@@ -102,7 +104,7 @@ def main() -> None:
         path.write_text(new, encoding="utf-8", newline="")
         diag.extend(difflib.unified_diff(old.splitlines(), new.splitlines(), fromfile=rel+"@pinned", tofile=rel+"@guarded", lineterm=""))
     args.diagnostics.parent.mkdir(parents=True, exist_ok=True)
-    args.diagnostics.write_text("\\n".join(diag) + "\\n", encoding="utf-8")
+    args.diagnostics.write_text("\n".join(diag) + "\n", encoding="utf-8")
     print("PASS: guarded only the unsupported new priority-UID filter interface in 2 pinned builtin files")
 
 
