@@ -1,5 +1,5 @@
 name: Start isolated OP13 PJZ110 6.6.89 SukiSU41087 build
-# Rebuild after pinned task_mmu SUSFS rebase + strict whole-patch dry-run.
+# Rebuild with fingerprint-checked 41087 optional priority UID interface guard; all booted config unchanged.
 on:
   push:
     branches: [SukiSU-Ultra]
