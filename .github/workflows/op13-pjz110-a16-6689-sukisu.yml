@@ -16,8 +16,8 @@ env:
   # v111 pins (reproducible build).
   CCTV18_ASSETS_REF: "21db9e7d547ca625bd5aa734fb5dfc8b94ea48ef"
   CCTV18_KERNEL_COMMIT: "1fa251814f74c86488de8c765ea24375dfbfc094"
-  SUKISU_SETUP_REF: "6c284e957feaa9a388a9f1c37dc4ec80d95e434b"
-  SUKISU_MAIN_COUNT_REF: "95226411b36f6d3c2d224c090133ad79db65bfc8"
+  SUKISU_SETUP_REF: "6397fcb5d96e8f4953c71e02c73f8c6800541bff"
+  SUKISU_MAIN_COUNT_REF: "608040a7028a0b4a709f3891bd3286ce236c7ba7"
   AK3_REF: "020dfeccf9d7e962a48400fc94d3e451df92eead"
   CCACHE_MAXSIZE: 8G
 
@@ -31,10 +31,10 @@ on:
         options: [stock_daily, stock_plus, minimal_safe, debug_only]
         default: minimal_safe
       sukisu_ref:
-        description: "Pinned latest 2026-10-14 upstream builtin at 6c284e957feaa9a388a9f1c37dc4ec80d95e434b. Driver version uses the pinned upstream main history count as in Kbuild and may differ from current released Manager 40900; manager compatibility remains to be tested."
+        description: "Pinned latest 2026-10-26 upstream builtin at 6397fcb5d96e8f4953c71e02c73f8c6800541bff. Driver version uses the pinned upstream main history count as in Kbuild and may differ from current released Manager 40900; CI manager 41087 compatibility remains to be tested on device."
         required: true
         type: string
-        default: "6c284e957feaa9a388a9f1c37dc4ec80d95e434b"
+        default: "6397fcb5d96e8f4953c71e02c73f8c6800541bff"
       kpm_enable:
         description: "Enable SukiSU KPM support. Kernel support only; no random KPM modules bundled."
         required: true
@@ -1205,7 +1205,7 @@ jobs:
           # not the older published 40900 manager code or a drifting GitHub API count.
           SRC_TREE="$GITHUB_WORKSPACE/kernel_workspace/KernelSU"
           actual_ref="$(git -C "$SRC_TREE" rev-parse HEAD)"
-          [ "$actual_ref" = "6c284e957feaa9a388a9f1c37dc4ec80d95e434b" ] || {
+          [ "$actual_ref" = "6397fcb5d96e8f4953c71e02c73f8c6800541bff" ] || {
             echo "::error::SukiSU source ref mismatch: $actual_ref"; exit 1;
           }
           [ "$(git -C "$SRC_TREE" rev-parse --is-shallow-repository)" = "false" ] || {
@@ -1499,8 +1499,8 @@ jobs:
           assert hashlib.sha256(src.read_bytes()).digest()==hashlib.sha256(blob).digest()
           version=Path("_ox_debug/real-sukisu-version.txt").read_text()
           fields=dict(row.split("=",1) for row in version.splitlines() if "=" in row)
-          assert fields["source_ref"]=="6c284e957feaa9a388a9f1c37dc4ec80d95e434b", "SukiSU checkout drift"
-          assert fields["main_ref"]=="95226411b36f6d3c2d224c090133ad79db65bfc8", "Driver revision count pin changed"
+          assert fields["source_ref"]=="6397fcb5d96e8f4953c71e02c73f8c6800541bff", "SukiSU checkout drift"
+          assert fields["main_ref"]=="608040a7028a0b4a709f3891bd3286ce236c7ba7", "Driver revision count pin changed"
           assert 40900<int(fields["driver_version"])<50000, "Latest builtin driver version not used"
           buildlog=Path("_ox_debug/build.log").read_text(errors="replace")
           assert "version: "+fields["driver_version"] in buildlog, "KSU_VERSION does not match pinned source history"
