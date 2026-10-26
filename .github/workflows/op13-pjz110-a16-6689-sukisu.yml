@@ -558,6 +558,16 @@ jobs:
           cp -af susfs4ksu/kernel_patches/include/linux/. common/include/linux/
           cp -f "$SUSFS_PATCH" common/
 
+          # Only guard the two 41087 optional priority-UID calls missing from our
+          # already-booted, pinned CCTV18 SUSFS 2.2.0 source. No feature switches,
+          # SUSFS core files or other kernel patches are changed.
+          python3 "$GITHUB_WORKSPACE/scripts/op13_sukisu41087_susfs_priority_compat.py" --selftest
+          python3 "$GITHUB_WORKSPACE/scripts/op13_sukisu41087_susfs_priority_compat.py" \
+            "$GITHUB_WORKSPACE/kernel_workspace/KernelSU/kernel" \
+            "$GITHUB_WORKSPACE/kernel_workspace/common/include/linux/susfs_def.h" \
+            "$GITHUB_WORKSPACE/_ox_debug/op13-41087-susfs-priority-compat.diff"
+
+
           echo "==> Skipping 69_hide_stuff.patch for SukiSU Ultra stable lane"
           echo "Reason: v77 reached final link, then failed on SELinux policy-query symbols. Keep this lane clean and compile-safe first."
 
