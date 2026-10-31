@@ -16,6 +16,6 @@ url='https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/b16e899a555e9b9
 data=urllib.request.urlopen(url,timeout=30).read();assert b'config KPM' in data and b'config KSU_SUSFS' in data
 (ksu/'Kconfig').write_bytes(data)
 p=Path('build-result/source-provenance.json');v=json.loads(p.read_text())
-v.update(compilation_run=41230343313,compilation_commit='4313b7471c6303e81117b5f8a8880eb38cda1e50',packaging_commit=os.environ['GITHUB_SHA'],kernel_compilation_reused_without_changes=True)
+v.update(compilation_run=41231027191,compilation_commit='6c7f14d75296e8e9971053e260f761bba6a8c541',packaging_commit=os.environ['GITHUB_SHA'],kernel_compilation_reused_without_changes=True)
 p.write_text(json.dumps(v,indent=2)+'\n')
 print('Retained raw Image and paired KPM SHA verified; no kernel rebuild.')

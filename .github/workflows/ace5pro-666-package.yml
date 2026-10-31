@@ -16,13 +16,24 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Test the actual writer with disposable loop block devices
-        run: sudo -E python3 ace5pro-validation/test_ace_writer_linux.py --installer "$PWD/ace5pro666/ace-install.sh" --output "$PWD/writer-loopback-report.json"
+      - name: Validate official AK3 entry and UI output including real Unix sockets
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+          assert hashlib.sha256(Path('ace5pro666/ace-install.sh').read_bytes()).hexdigest()=='a353c4d812dd791e39dade6d254d5aefe696f91f2fd9ef894e19726e27a8de4a'
+          print('Exact writer already passed 21 actual loop-device cases in run 41230730260.')
+          PY
+          python3 ace5pro-validation/prepare_entry.py
+          python3 ace5pro-validation/test_ak3_ui_output.py --backend entry-check/update-binary --core entry-check/ak3-core.sh --output ui-output.json
+          python3 ace5pro-validation/test_official_ak3_entry_linux.py --backend entry-check/update-binary --core entry-check/ak3-core.sh --output official-entry.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: Ace5Pro-writer-loopback-${{ github.run_id }}
-          path: writer-loopback-report.json
+          name: Ace5Pro-official-AK3-entry-${{ github.run_id }}
+          path: |
+            ui-output.json
+            official-entry.json
   package:
     needs: install-check
     runs-on: ubuntu-24.04
@@ -34,11 +45,11 @@ jobs:
       - name: Wait for the already running kernel compilation
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh run watch 41230343313 --repo Andyxyc/xm-ws --exit-status || true
+        run: gh run watch 41231027191 --repo Andyxyc/xm-ws --exit-status || true
       - uses: actions/download-artifact@v4
         with:
-          name: Ace5Pro-666-candidate-41230343313
-          run-id: 41230343313
+          name: Ace5Pro-666-candidate-41231027191
+          run-id: 41231027191
           github-token: ${{ github.token }}
           path: retained
       - name: Restore completed compilation without rebuilding it

@@ -31,6 +31,26 @@ before='''  blockdev --setrw $BLOCK 2>/dev/null;
 assert text.count(before)==1,'Pinned AK3 writer source changed'
 text=text.replace(before,'  ace_flash_boot "$BLOCK" "$BOOTIMG" "$AKHOME/boot-new.img";',1)
 core.write_text(text)
+# The official manager reads update-binary output lines starting with ui_print.
+# For its FD 1, reuse stdout instead of reopening a possible socket via procfs.
+# Recovery's non-1 descriptor continues to use the upstream protocol path.
+ui_before='''    echo "ui_print $1
+      ui_print" >> /proc/self/fd/$OUTFD;'''
+ui_after='''    if [ "$OUTFD" = 1 ]; then
+      printf 'ui_print %s\\nui_print\\n' "$1";
+    else
+      echo "ui_print $1
+      ui_print" >> /proc/self/fd/$OUTFD;
+    fi;'''
+for target in [core,ak/'META-INF/com/google/android/update-binary']:
+    body=target.read_text()
+    assert body.count(ui_before)==1,'Pinned AK3 ui_print implementation changed'
+    target.write_text(body.replace(ui_before,ui_after,1))
+progress_before='show_progress() { echo "progress $1 $2" >> /proc/self/fd/$OUTFD; }'
+progress_after='show_progress() { if [ "$OUTFD" = 1 ]; then printf "progress %s %s\\n" "$1" "$2"; else echo "progress $1 $2" >> /proc/self/fd/$OUTFD; fi; }'
+backend=ak/'META-INF/com/google/android/update-binary'
+body=backend.read_text();assert body.count(progress_before)==1
+backend.write_text(body.replace(progress_before,progress_after,1))
 shutil.copyfile(root/'anykernel.sh',ak/'anykernel.sh')
 shutil.copyfile(root/'ace-install.sh',ak/'tools/ace-install.sh')
 shutil.copyfile(image,ak/'Image')
@@ -59,5 +79,5 @@ with zipfile.ZipFile(dest) as z:
 manifest.update(ak3_file=name,ak3_sha256=hashlib.sha256(dest.read_bytes()).hexdigest(),ak3_bytes=dest.stat().st_size,installer='standard AK3 entry/repack; current boot only; verified persistent backup; single complete partition write; full readback',install_tested_on_phone=False)
 (out/'build-evidence.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n')
 (out/(name+'.sha256')).write_text(manifest['ak3_sha256']+'  '+name+'\n')
-(out/'README.txt').write_text('OnePlus Ace 5 Pro / PKR110 / Android 16\nKernel 6.6.66 / android15-8 / 4K\nSukiSU + SUSFS 2.3.0 + paired KPM ABI2\n\nCandidate: physical boot and hardware acceptance are pending.\nKeep an independent stock boot.img before testing.\nInstall ZIP through an AK3-capable root flasher or compatible Recovery.\nSelecting this ZIP in the manager GKI boot-image patch screen is not AK3 installation.\nThe installer keeps your current boot ramdisk and writes the current boot slot only.\nNo APK is bundled.\n',encoding='utf-8')
+(out/'README.txt').write_text('OnePlus Ace 5 Pro / PKR110 / Android 16\nKernel 6.6.66 / android15-8 / 4K\nSukiSU + SUSFS 2.3.0 + paired KPM ABI2\n\nCandidate: physical boot and hardware acceptance are pending.\nKeep an independent stock boot.img before testing.\nUse the official SukiSU manager Flash AK3 entry, with KPM set to Follow Kernel.\nCompatible Recovery uses the standard AK3 update-binary entry.\nThis is a standard AK3 ZIP, not a module package or a GKI boot-image patch input.\nThe installer keeps the selected boot ramdisk.\nNo APK is bundled.\n',encoding='utf-8')
 print(json.dumps({'file':str(dest),'sha256':manifest['ak3_sha256'],'bytes':manifest['ak3_bytes'],'boot_verified':False}))
