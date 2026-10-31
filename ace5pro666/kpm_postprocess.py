@@ -43,7 +43,60 @@ def inspect_entry(image):
     return {'branch_offset': offset, 'entry_offset': target,
             'entry_code_sha256': sha(code), 'image_bytes': len(image), 'sha256': sha(image)}
 
-def verify(image, before, kp, system_map, tool_log, key_hash):
+def verify_relative_kallsyms(image, symbols, base, tool_log):
+    """Validate every relative entry against the independent linker map.
+
+    The pinned resolver logs table locations but omits an absolute kernel-base
+    line on this path. Location logs are only locators; names and values are
+    decoded from the actual unpatched Image and compared with System.map.
+    """
+    def location(pattern, label):
+        values = set(re.findall(pattern, tool_log))
+        require(len(values) == 1, 'Missing/ambiguous relative table: ' + label)
+        return int(next(iter(values)), 16)
+    require('try kallsyms_offsets first for 64-bit relative-base kernel' in tool_log,
+            'Absent base log without a recognized relative-kallsyms path')
+    offsets = location(r'kallsyms_offsets offset: 0x([0-9a-fA-F]+)', 'offsets')
+    names = location(r'kallsyms_names offset: 0x([0-9a-fA-F]+)', 'names')
+    table = location(r'kallsyms_token_table offset: 0x([0-9a-fA-F]+)', 'tokens')
+    index = location(r'kallsyms_token_index offset: 0x([0-9a-fA-F]+)', 'token index')
+    number = location(r'kallsyms_num_syms offset: 0x([0-9a-fA-F]+)', 'number')
+    markers = location(r'kallsyms_markers range: \[0x([0-9a-fA-F]+),', 'markers')
+    require(0 <= number <= len(image) - 8, 'Kallsyms count is outside Image')
+    count = struct.unpack_from('<Q', image, number)[0]
+    require(10000 <= count <= 2000000 and offsets + count * 4 <= len(image),
+            'Relative kallsyms size/count invalid')
+    require(0 <= names < markers <= table < index <= len(image) - 512,
+            'Relative kallsyms table order/bounds invalid')
+    tokens = []
+    for off in struct.unpack_from('<256H', image, index):
+        start = table + off
+        require(table <= start < index, 'Token begins outside token table')
+        end = image.find(b'\0', start, index)
+        require(end >= start, 'Token lacks bounded NUL')
+        tokens.append(image[start:end].decode('ascii'))
+    pos = names
+    for i in range(count):
+        require(pos < markers, 'Names table truncated')
+        length = image[pos]
+        pos += 1
+        if length & 0x80:
+            require(pos < markers, 'Long name length truncated')
+            length = (length & 0x7f) | (image[pos] << 7)
+            pos += 1
+        require(length > 0 and pos + length <= markers, 'Compressed symbol bounds invalid')
+        name = ''.join(tokens[token] for token in image[pos:pos + length])
+        pos += length
+        require(len(name) > 1 and name[0].isalpha(), 'Malformed relative symbol name/type')
+        address = base + struct.unpack_from('<I', image, offsets + i * 4)[0]
+        require(address in symbols.get(name[1:], ()), 'Relative kallsyms differs from System.map: ' + name[1:])
+    require(pos == markers, 'Decoded names do not exactly reach kallsyms markers')
+    return {'status': 'PASS_ALL_RELATIVE_KALLSYMS_AGAINST_SYSTEM_MAP',
+            'symbols_checked': count, 'base_source': 'independent System.map _text',
+            'base': hex(base), 'table_offsets': {'offsets': offsets, 'names': names,
+            'tokens': table, 'index': index, 'num_syms': number, 'markers': markers}}
+
+def verify(image, before, kp, system_map, tool_log, key_hash=None):
     orig = inspect_entry(before)
     entry = inspect_entry(image)
     align = (len(before) + 4095) & ~4095
@@ -62,7 +115,10 @@ def verify(image, before, kp, system_map, tool_log, key_hash):
     require(values[5] % 4096 == 0 and values[5] >= align, 'Invalid payload runtime start offset')
     require(image[setup + 160:setup + 168] == before[:8], 'Saved primary entry header differs')
     require(image[setup + 168:setup + 232] == bytes(64), 'Direct superkey must remain empty')
-    require(image[setup + 232:setup + 264] == key_hash, 'Random root key verifier mismatch')
+    if key_hash is not None:
+        require(image[setup + 232:setup + 264] == key_hash, 'Random root key verifier mismatch')
+    else:
+        require(any(image[setup + 232:setup + 264]), 'Existing image root verifier is empty')
     # setup_preset_t.patch_config follows 64B reserved area after root hash.
     # Its 14 symbol uint64 slots precede patch_su_config. Official tool does
     # not enable it; APatch root install calls are disabled in paired source.
@@ -76,7 +132,12 @@ def verify(image, before, kp, system_map, tool_log, key_hash):
     require(len(symbols.get('_text', ())) == 1, 'Missing/ambiguous linker _text')
     base = next(iter(symbols['_text']))
     resolved_base = re.findall(r'kernel base address: 0x([0-9a-fA-F]+)', tool_log)
-    require(len(resolved_base) == 1 and int(resolved_base[0], 16) == base, 'Resolver base differs from System.map')
+    require(len(resolved_base) <= 1, 'Multiple resolver base records')
+    relative_validation = None
+    if resolved_base:
+        require(int(resolved_base[0], 16) == base, 'Resolver base differs from System.map')
+    else:
+        relative_validation = verify_relative_kallsyms(before, symbols, base, tool_log)
     checked = []
     for name, off in re.findall(r'^\[\+\] (\w+): type: \w, offset: 0x([0-9a-fA-F]+)', tool_log, re.M):
         require(len(symbols.get(name, ())) == 1, 'Missing/ambiguous resolved symbol: ' + name)
@@ -112,7 +173,11 @@ def verify(image, before, kp, system_map, tool_log, key_hash):
             'bridge_symbol': bridge, 'bridge_offset': bridge_offset,
             'linker_symbols_checked': sorted(set(checked)), 'saved_config_symbols_checked': config_checked,
             'resolver_warnings': warnings, 'kp_su_config': 0,
-            'root_key_policy': '48 random hex characters via stdin FD0; only SHA256 verifier retained in image; plaintext not retained',
+            'relative_kallsyms_validation': relative_validation,
+            'root_key_generation_verified': key_hash is not None,
+            'root_key_policy': ('48 random hex characters via stdin FD0; only SHA256 verifier retained in image; plaintext not retained'
+                                if key_hash is not None else
+                                'Existing stored nonzero verifier only; original key generation and plaintext were not observed'),
             'limitation': 'Static structure/source pairing only. Real boot, KASLR, KPM lifecycle and event behavior require device tests.'}
 
 def main():

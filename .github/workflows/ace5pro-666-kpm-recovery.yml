@@ -1,0 +1,50 @@
+name: Ace5Pro reuse compiled Image - KPM and AK3 only
+run-name: Ace5Pro 6.6.66 KPM recovery without kernel compilation
+on:
+  push:
+    branches: [ace5pro-666-kpm-recovery-20261101]
+    paths: ['ace5pro666/**', 'ace5pro-validation/**', '.github/workflows/ace5pro-666-kpm-recovery.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  recover:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: Ace5Pro-666-candidate-41230343313
+          run-id: 41230343313
+          github-token: ${{ github.token }}
+          path: retained
+      - name: Bind the completed raw compilation and reuse it
+        run: python3 ace5pro-validation/restore_raw.py
+      - name: Rerun only the KPM postprocessor and verify actual addresses
+        run: |
+          chmod 755 build-result/kpm/kptools-linux
+          python3 ace5pro666/kpm_postprocess.py --tool build-result/kpm/kptools-linux --before build-result/Image.raw --kpimg build-result/kpm/kpimg --system-map build-result/System.map --output build-result/Image.kpm.repaired --report build-result/kpm-entry.json --log build-result/kpm-repaired.log
+      - name: Validate official AK3 caller transport and package
+        run: |
+          python3 ace5pro-validation/prepare_entry.py
+          python3 ace5pro-validation/test_ak3_ui_output.py --backend entry-check/update-binary --core entry-check/ak3-core.sh --output build-result/ui-output.json
+          python3 ace5pro-validation/test_official_ak3_entry_linux.py --ak3 entry-check --output build-result/official-entry.json
+          git init -q kernel-work/AnyKernel3
+          git -C kernel-work/AnyKernel3 remote add origin https://github.com/osm0sis/AnyKernel3.git
+          git -C kernel-work/AnyKernel3 fetch -q --depth=1 origin 41f04bdb4ee30a44e429c2c1131d5e8bb32b15f1
+          git -C kernel-work/AnyKernel3 checkout -q --detach FETCH_HEAD
+          python3 ace5pro666/package.py kernel-work/common kernel-work/AnyKernel3 build-result/Image.kpm.repaired
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Ace5Pro-666-fast-candidate-${{ github.run_id }}
+          path: |
+            deliverables/*
+            build-result/*
+          include-hidden-files: true
+          retention-days: 14
+          if-no-files-found: error
