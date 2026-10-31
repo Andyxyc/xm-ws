@@ -33,7 +33,7 @@ compile)
   cd "$COMMON"
   # Official version formula: 40000 + fixed main commit count 3935 - 2815 = 41120.
   # Freeze the two upstream Makefile inputs; keep builtin b16 source identity.
-  ARGS=(O=out ARCH=arm64 LLVM=-18 CC="ccache clang-18" LD=ld.lld-18 HOSTCC=clang-18 HOSTLD=ld.lld-18 GITHUB_COMMITS=3935 KSU_GITHUB_VER=4.3.0)
+  ARGS=(O=out ARCH=arm64 LLVM=-18 CC="ccache clang-18" LD=ld.lld-18 HOSTCC=clang-18 HOSTLD=ld.lld-18 GITHUB_COMMITS=3935 KSU_GITHUB_VER=4.3.0 KSU_VERSION_FULL=v4.3.0-b16e899a@builtin+708f083c)
   make "${ARGS[@]}" gki_defconfig 2>&1 | tee "$ROOT/build-result/defconfig.log"
   # Generate the actual UAPI headers before the source-integrated preinit runner.
   make "${ARGS[@]}" headers_install INSTALL_HDR_PATH="$OUT/usr" 2>&1 | tee "$ROOT/build-result/headers.log"

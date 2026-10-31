@@ -2,7 +2,7 @@
 # Called by AK3 only after its standard unpack/repack has succeeded.
 ace_flash_boot() {
   local block="$1" original="$2" image="$3"
-  local size newsize dir point fs backup oldhash newhash readhash stamp
+  local size newsize dir point fs backup oldhash backuphash newhash readhash stamp
   [ -b "$block" ] || abort "Boot partition is unavailable."
   [ -s "$original" ] && [ -s "$image" ] || abort "Boot image is missing."
   size=$(wc -c < "$original")
@@ -22,7 +22,10 @@ ace_flash_boot() {
   ui_print " Saving boot backup..."
   cp "$original" "$backup" || abort "Cannot save boot backup."
   oldhash=$(sha256sum "$original" | cut -d' ' -f1)
-  [ "$(sha256sum "$backup" | cut -d' ' -f1)" = "$oldhash" ] || abort "Boot backup could not be verified."
+  backuphash=$(sha256sum "$backup" | cut -d' ' -f1)
+  case "$oldhash:$backuphash" in *[!0-9a-f:]*|'':*) abort "Cannot read boot backup checksums." ;; esac
+  [ "${#oldhash}" -eq 64 ] && [ "${#backuphash}" -eq 64 ] || abort "Cannot read boot backup checksums."
+  [ "$(wc -c < "$backup")" = "$size" ] && [ "$backuphash" = "$oldhash" ] || abort "Boot backup could not be verified."
   sync || abort "Cannot sync boot backup."
   printf '%s  %s\n' "$oldhash" "$(basename "$backup")" > "$backup.sha256" || abort "Cannot save backup checksum."
   # Pad a RAM file, then write the complete replacement in one pass.
@@ -38,7 +41,8 @@ ace_flash_boot() {
   dd if="$block" of="$AKHOME/boot-readback.img" bs=1048576 2>/dev/null || abort "Cannot read back boot. Backup: $backup"
   readhash=$(sha256sum "$AKHOME/boot-readback.img" | cut -d' ' -f1)
   [ "$newhash" = "$readhash" ] || abort "Boot readback differs. Backup: $backup"
-  printf 'partition=%s\nbefore=%s\nafter=%s\n' "$block" "$oldhash" "$newhash" > "$backup.install.txt"
+  printf 'partition=%s\nbefore=%s\nafter=%s\n' "$block" "$oldhash" "$newhash" > "$backup.install.txt" || abort "Boot verified; cannot save the install record. Backup: $backup"
+  sync || abort "Boot verified; cannot sync the install record. Backup: $backup"
   ui_print " Boot verified."
   ui_print " Backup: $backup"
 }

@@ -1,0 +1,13 @@
+--- a/kernel/infra/file_wrapper.c
++++ b/kernel/infra/file_wrapper.c
+@@ -17,8 +17,10 @@
+     if (IS_ERR(wrapper)) {
+         filp_close(orig_file, current->files);
+         return PTR_ERR(wrapper);
+     }
++    // The wrapper holds its own reference to orig_file.
++    fput(orig_file);
+     fp->private_data = wrapper;
+     const struct file_operations *new_fops = fops_get(&wrapper->ops);
+     replace_fops(fp, new_fops);
+     return 0;

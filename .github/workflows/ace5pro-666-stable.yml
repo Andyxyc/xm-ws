@@ -7,6 +7,7 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: ace5pro-666-${{ github.ref }}
   cancel-in-progress: false
@@ -24,10 +25,14 @@ jobs:
           sudo apt-get install -y --no-install-recommends clang-18 lld-18 llvm-18 llvm-18-tools ccache bc bison flex build-essential libssl-dev libelf-dev dwarves cpio rsync zip unzip xz-utils zlib1g-dev
           mkdir -p build-result
           clang-18 --version | tee build-result/compiler.txt
-      - uses: actions/cache@v4
+      - name: Reuse the first compilation cache
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run watch 41230343313 --repo Andyxyc/xm-ws --exit-status || true
+      - uses: actions/cache/restore@v4
         with:
           path: ~/.cache/ccache
-          key: ace5pro-666-clang18-b16-230-${{ github.sha }}
+          key: ace5pro-666-clang18-b16-230-${{ github.run_id }}
           restore-keys: ace5pro-666-clang18-b16-230-
       - name: Prepare pinned sources
         run: bash ace5pro666/build.sh prepare
@@ -43,6 +48,11 @@ jobs:
             if [ -f "kernel-work/common/out/$f" ]; then cp "kernel-work/common/out/$f" "build-result/$(basename "$f")"; fi
           done
           ccache -s > build-result/ccache.txt || true
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: ~/.cache/ccache
+          key: ace5pro-666-clang18-b16-230-${{ github.run_id }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
