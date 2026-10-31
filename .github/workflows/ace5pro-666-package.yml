@@ -1,0 +1,62 @@
+name: Ace5Pro install validation and AK3 package
+run-name: Ace5Pro 6.6.66 installer validation and package
+on:
+  push:
+    branches: [ace5pro-666-package-20261101]
+    paths: ['ace5pro666/**', 'ace5pro-validation/**', '.github/workflows/ace5pro-666-package.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  install-check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Test the actual writer with disposable loop block devices
+        run: sudo -E python3 ace5pro-validation/test_ace_writer_linux.py --installer "$PWD/ace5pro666/ace-install.sh" --output "$PWD/writer-loopback-report.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Ace5Pro-writer-loopback-${{ github.run_id }}
+          path: writer-loopback-report.json
+  package:
+    needs: install-check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Wait for the already running kernel compilation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run watch 41230343313 --repo Andyxyc/xm-ws --exit-status || true
+      - uses: actions/download-artifact@v4
+        with:
+          name: Ace5Pro-666-candidate-41230343313
+          run-id: 41230343313
+          github-token: ${{ github.token }}
+          path: retained
+      - name: Restore completed compilation without rebuilding it
+        run: python3 ace5pro-validation/restore_compilation.py
+      - name: Repackage and check
+        run: |
+          git init -q kernel-work/AnyKernel3
+          git -C kernel-work/AnyKernel3 remote add origin https://github.com/osm0sis/AnyKernel3.git
+          git -C kernel-work/AnyKernel3 fetch -q --depth=1 origin 41f04bdb4ee30a44e429c2c1131d5e8bb32b15f1
+          git -C kernel-work/AnyKernel3 checkout -q --detach FETCH_HEAD
+          python3 ace5pro666/package.py kernel-work/common kernel-work/AnyKernel3 build-result/Image.kpm
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Ace5Pro-666-AK3-${{ github.run_id }}
+          path: |
+            deliverables/*
+            build-result/*
+          include-hidden-files: true
+          retention-days: 14
+          if-no-files-found: error

@@ -14,6 +14,7 @@ supported.vendorpatchlevels=
 '; }
 BLOCK=boot
 IS_SLOT_DEVICE=auto
+SLOT_SELECT=active
 RAMDISK_COMPRESSION=auto
 PATCH_VBMETA_FLAG=auto
 . tools/ak3-core.sh
