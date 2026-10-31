@@ -26,7 +26,7 @@ jobs:
           PY
           python3 ace5pro-validation/prepare_entry.py
           python3 ace5pro-validation/test_ak3_ui_output.py --backend entry-check/update-binary --core entry-check/ak3-core.sh --output ui-output.json
-          python3 ace5pro-validation/test_official_ak3_entry_linux.py --backend entry-check/update-binary --core entry-check/ak3-core.sh --output official-entry.json
+          python3 ace5pro-validation/test_official_ak3_entry_linux.py --ak3 entry-check --output official-entry.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -18,4 +18,7 @@ for target,upstream in [('update-binary','META-INF/com/google/android/update-bin
         assert body.count(values['progress_before'])==1
         body=body.replace(values['progress_before'],values['progress_after'],1)
     (out/target).write_text(body)
+    nested=out/('META-INF/com/google/android/update-binary' if target=='update-binary' else 'tools/ak3-core.sh')
+    nested.parent.mkdir(parents=True,exist_ok=True)
+    nested.write_text(body)
 print('Exact pinned backend/core transformed with the actual packaging source.')
