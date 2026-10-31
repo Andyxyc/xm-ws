@@ -1,0 +1,55 @@
+name: Ace5Pro 6.6.66 SukiSU SUSFS KPM
+run-name: Ace5Pro 6.6.66 candidate ${{ github.run_number }}
+on:
+  push:
+    branches: [ace5pro-666-stable-20261101]
+    paths: ['ace5pro666/**', '.github/workflows/ace5pro-666-stable.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ace5pro-666-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends clang-18 lld-18 llvm-18 llvm-18-tools ccache bc bison flex build-essential libssl-dev libelf-dev dwarves cpio rsync zip unzip xz-utils zlib1g-dev
+          mkdir -p build-result
+          clang-18 --version | tee build-result/compiler.txt
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ace5pro-666-clang18-b16-230-${{ github.sha }}
+          restore-keys: ace5pro-666-clang18-b16-230-
+      - name: Prepare pinned sources
+        run: bash ace5pro666/build.sh prepare
+      - name: Compile kernel
+        run: bash ace5pro666/build.sh compile
+      - name: Pair official KPM payload and package AK3
+        run: bash ace5pro666/build.sh package
+      - name: Retain compile and package evidence
+        if: always()
+        run: |
+          mkdir -p build-result
+          for f in .config System.map Module.symvers include/generated/utsrelease.h include/generated/compile.h; do
+            if [ -f "kernel-work/common/out/$f" ]; then cp "kernel-work/common/out/$f" "build-result/$(basename "$f")"; fi
+          done
+          ccache -s > build-result/ccache.txt || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Ace5Pro-666-candidate-${{ github.run_id }}
+          path: |
+            deliverables/*
+            build-result/*
+          include-hidden-files: true
+          retention-days: 14
+          if-no-files-found: error

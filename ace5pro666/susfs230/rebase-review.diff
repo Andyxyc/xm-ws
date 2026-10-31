@@ -1,0 +1,65 @@
+--- upstream-93114563.patch
++++ target-9a56-rebased.patch
+@@ -101,8 +101,8 @@
+ +#include <linux/susfs_def.h>
+ +#endif
+  
+- #ifndef __GENKSYMS__
+- #include <linux/dma-buf.h>
++ #include <linux/uaccess.h>
++ #include <asm/mmu_context.h>
+ @@ -1926,6 +1929,23 @@ static int bprm_execve(struct linux_binprm *bprm,
+  	return retval;
+  }
+@@ -1155,10 +1155,10 @@
+ index cf20a8f08..71ee077cf 100644
+ --- a/fs/proc/base.c
+ +++ b/fs/proc/base.c
+-@@ -101,6 +101,10 @@
++@@ -99,6 +99,10 @@
++ #include <linux/cn_proc.h>
+  #include <linux/ksm.h>
+  #include <linux/cpufreq_times.h>
+- #include <linux/dma-buf.h>
+ +#if defined(CONFIG_KSU_SUSFS_SUS_MAP) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
+ +#include <linux/susfs_def.h>
+ +#endif // #if defined(CONFIG_KSU_SUSFS_SUS_MAP) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
+@@ -1373,7 +1373,7 @@
+ +			if (!ret) {
+ +				pgoff = ((loff_t)vma->vm_pgoff) << PAGE_SHIFT;
+ +				start = vma->vm_start;
+-+				end = VMA_PAD_START(vma);
+++				end = vma->vm_end;
+ +				__fold_filemap_fixup_entry(&((struct proc_maps_private *)m->private)->iter, &end);
+ +				show_vma_header_prefix(m, start, end, flags, pgoff, dev, ino);
+ +				seq_pad(m, ' ');
+@@ -1399,8 +1399,9 @@
+  	}
+  
+  	start = vma->vm_start;
+-@@ -1040,6 +1079,13 @@ static int show_smap(struct seq_file *m, void *v)
+- 	struct vm_area_struct *vma = v;
++@@ -878,7 +917,14 @@ static int show_smap(struct seq_file *m, void *v)
++ 	struct vm_area_struct *pad_vma = get_pad_vma(v);
++ 	struct vm_area_struct *vma = get_data_vma(v);
+  	struct mem_size_stats mss;
+  
+ +#ifdef CONFIG_KSU_SUSFS_SUS_MAP
+@@ -1412,7 +1413,7 @@
+ +
+  	memset(&mss, 0, sizeof(mss));
+  
+- 	if (!vma_data_pages(vma))
++ 	if (!vma_pages(vma))
+ @@ -1103,7 +1149,14 @@ static int show_smaps_rollup(struct seq_file *m, void *v)
+  
+  	vma_start = vma->vm_start;
+@@ -2463,7 +2464,7 @@
+ +
+ +		if (vma && vma->vm_file && SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file)))
+ +			break;
+-+		
+++
+ +		page = get_user_page_vma_remote(mm, addr,
+ +							     gup_flags, &vma);
+ +#else

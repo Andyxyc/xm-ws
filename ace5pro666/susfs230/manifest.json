@@ -1,0 +1,183 @@
+{
+  "source_repository": "cctv18/android_kernel_common_oneplus_sm8750",
+  "source_commit": "9a56e8288fc62e2047a142114faeb9467447311d",
+  "susfs_repository": "https://gitlab.com/simonpunk/susfs4ksu",
+  "susfs_commit": "93114563fd6b08092b9ce8c0309738c921ac8bd1",
+  "susfs_version": "2.3.0",
+  "hook_hunks_preserved": 123,
+  "hook_files": 25,
+  "smap_disabled": false,
+  "source_files": [
+    {
+      "file": "block/ioprio.c",
+      "sha256": "6e8856d9bb1dfaf293bd5a9f9086e426aa3c3e6e7f48e75c7c85156202eaca43",
+      "byte_count": 5964,
+      "removed_added_newline": true
+    },
+    {
+      "file": "fs/exec.c",
+      "sha256": "863df98ff7a5d4a0eeafb430f5eea9937f1c02b523a18462b32e4c8140de225f",
+      "byte_count": 53553,
+      "removed_added_newline": true
+    },
+    {
+      "file": "fs/Makefile",
+      "sha256": "9ba831e35b31462ce0623a4751863d2abaf6f4b1285a89c92c89a4c5cef8c5dd",
+      "byte_count": 4695,
+      "removed_added_newline": true
+    },
+    {
+      "file": "fs/namei.c",
+      "sha256": "a1e9186e9bb53145019b396988144e662f8fd4024db236e5c7ac6bf0edde97f3",
+      "byte_count": 142822,
+      "removed_added_newline": true
+    },
+    {
+      "file": "fs/namespace.c",
+      "sha256": "84058fdc93bb142734fb0cdbc6a030e2e271578d054ce8bfb2f7bce3dcedb2fe",
+      "byte_count": 127574,
+      "removed_added_newline": true
+    },
+    {
+      "file": "fs/open.c",
+      "sha256": "be4f4219b1b6934fd2e6ef3d42b9c5e62e249769dbbc6175b92a94336d7d00dd",
+      "byte_count": 42313,
+      "removed_added_newline": true
+    },
+    {
+      "file": "fs/proc_namespace.c",
+      "sha256": "07a819793943c13b8423e43b33c6a623e64151213320c1ac3971477a5a19e718",
+      "byte_count": 8301,
+      "removed_added_newline": true
+    },
+    {
+      "file": "fs/readdir.c",
+      "sha256": "494ec14b74292487cc95d26cbdf9dba5b8442c9b839d033742ecf6c3cdca3f2c",
+      "byte_count": 15384,
+      "removed_added_newline": true
+    },
+    {
+      "file": "fs/read_write.c",
+      "sha256": "0b53dc9827aaac8ef8b29fe6442a84457a60e9af9fa20a6ec6171d6e10cedb3c",
+      "byte_count": 41892,
+      "removed_added_newline": true
+    },
+    {
+      "file": "fs/stat.c",
+      "sha256": "c82d3e263e9a2425b616758d681f4b791e5149008e6a7702edc353cb8dbf2541",
+      "byte_count": 23630,
+      "removed_added_newline": true
+    },
+    {
+      "file": "fs/statfs.c",
+      "sha256": "7257764b8e3ab4183e3c26713c3f0492770abdc57a8773bb91eb8736bf8cd3fb",
+      "byte_count": 9964,
+      "removed_added_newline": true
+    },
+    {
+      "file": "fs/super.c",
+      "sha256": "49e83031c23341b6984ec7c69d34791155239b87bdc32d304c42d764dd691e8d",
+      "byte_count": 58048,
+      "removed_added_newline": true
+    },
+    {
+      "file": "kernel/kallsyms.c",
+      "sha256": "231cbbe10420d8b1652145da3af908d63e03775c11f3ce052f85720bbeccb9dc",
+      "byte_count": 24118,
+      "removed_added_newline": true
+    },
+    {
+      "file": "kernel/reboot.c",
+      "sha256": "2ac6cc43f7b33f0153b031e441de7aa126c1c89936c544226fe8706fcb01913a",
+      "byte_count": 33054,
+      "removed_added_newline": true
+    },
+    {
+      "file": "kernel/sys.c",
+      "sha256": "2e7dcc699e9a7a8b9a795e974d292fa95f6516da893b8973fb0ee0605746426e",
+      "byte_count": 70573,
+      "removed_added_newline": true
+    },
+    {
+      "file": "mm/memory.c",
+      "sha256": "7cd250cb365f15977d74bb9283f9c0a8399c3c8dcd281b54aaeb1a987ce894cb",
+      "byte_count": 188924,
+      "removed_added_newline": true
+    },
+    {
+      "file": "security/selinux/avc.c",
+      "sha256": "9cba1c7547eea66c21fec916734aef06dbb16d23b093b82109b5403300f90560",
+      "byte_count": 32038,
+      "removed_added_newline": true
+    },
+    {
+      "file": "security/selinux/hooks.c",
+      "sha256": "4dea7197cd5eba3aec33f5737cc3ae1063c85a8a5feb34eac1cee32baa5073ee",
+      "byte_count": 194233,
+      "removed_added_newline": true
+    },
+    {
+      "file": "security/selinux/selinuxfs.c",
+      "sha256": "07a36d5974075d8e205b4b700ee5151766a74bd6a826b5697c54877eb9bf9ff2",
+      "byte_count": 51147,
+      "removed_added_newline": true
+    },
+    {
+      "file": "fs/notify/fdinfo.c",
+      "sha256": "5964b6ff5cbca5c7e4d6a1279092acebc94487434f2c3a6db1c8aa6700b909df",
+      "byte_count": 4040,
+      "removed_added_newline": true
+    },
+    {
+      "file": "fs/proc/base.c",
+      "sha256": "6dd17be8a5c93e40fd6047f09c8f9fd03d3257538e4b99e42cecc223d6bf67c5",
+      "byte_count": 98368,
+      "removed_added_newline": true
+    },
+    {
+      "file": "fs/proc/bootconfig.c",
+      "sha256": "5b6ffb8273bfb3a317ad65034b0e10ff3d7e05038dec68accfd09a0840947309",
+      "byte_count": 2021,
+      "removed_added_newline": true
+    },
+    {
+      "file": "fs/proc/fd.c",
+      "sha256": "5e959fe6d6e74bada2d47d0286761fc5360f81659ef097a94bb983587ba13056",
+      "byte_count": 9402,
+      "removed_added_newline": true
+    },
+    {
+      "file": "fs/proc/task_mmu.c",
+      "sha256": "3f9cfbc826084d4df3546474fa7d3602dc812087f9ce8988c6a641f5d77c4e87",
+      "byte_count": 53323,
+      "removed_added_newline": true
+    },
+    {
+      "file": "drivers/input/input.c",
+      "sha256": "2a58d451737223f11e4fe9dcafc539d4b4b68cc74b47605b3b80177bf0c27d36",
+      "byte_count": 71040,
+      "removed_added_newline": true
+    }
+  ],
+  "published_files": {
+    "50_add_susfs_230_cctv18_9a56.patch": "046be63fccae5e154672071d00482afe0e784d8aa71085607c408883ba094a59",
+    "susfs.c": "b8080d0fe99b1c3f76d091c7537fbf0e1a32400f8d4193b362d59c694923a185",
+    "susfs.h": "e06f190fe480ab6725851780b022b472b9b28c56132a54656495388ff8437c50",
+    "susfs_def.h": "c515e11107088161b70e3bb7d4c49cdd3b882808c2e374a9a5237e5b8f19844b"
+  },
+  "upstream_patch_sha256": "3ee6883c075cc45949b3088cf4241291b7790ed44e68d3e74d59841857222219",
+  "rebase_changes": [
+    "fs/exec.c include context: no upstream dma-buf __GENKSYMS block in target.",
+    "fs/proc/base.c include context: target has no linux/dma-buf.h include.",
+    "fs/proc/task_mmu.c show_smap preserves get_pad_vma/get_data_vma and vma_pages() API while adding upstream SUS_MAP early return after declarations.",
+    "OPEN_REDIRECT end uses target vma->vm_end then existing __fold_filemap_fixup_entry; VMA_PAD_START absent in target.",
+    "Removed one whitespace-only added blank line from upstream patch so git apply --whitespace=error-all passes."
+  ],
+  "validation": {
+    "git_apply_check": "PASS",
+    "git_apply_whitespace_error_all": "PASS",
+    "git_reverse_apply_check": "PASS",
+    "local_compile": "NOT_RUN",
+    "physical_boot": "NOT_RUN"
+  }
+}
