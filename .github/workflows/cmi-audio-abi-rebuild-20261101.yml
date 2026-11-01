@@ -1,0 +1,84 @@
+name: CMI audio ABI experimental rebuild
+'on':
+  push:
+    branches: [cmi-audio-abi-rebuild-20261101]
+    paths:
+      - ci/cmi/audio_rebuild_20261101.py
+      - ci/cmi/test_audio_rebuild_20261101.py
+      - .github/workflows/cmi-audio-abi-rebuild-20261101.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: cmi-audio-abi-experiment-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Host regression and prepare pinned build
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p driver-results
+          printf 'Audio ABI experiment; this kernel is not an RC3 replacement and MUST NOT be flashed.\n' > driver-results/NOT_FLASHABLE.txt
+          python3 -m py_compile ci/cmi/audio_rebuild_20261101.py ci/cmi/test_audio_rebuild_20261101.py
+          python3 ci/cmi/test_audio_rebuild_20261101.py
+          python3 ci/cmi/audio_rebuild_20261101.py prepare "$GITHUB_WORKSPACE"
+          bash -n build-cmi-public-deps-audio.generated.sh
+          bash -n build-cmi-audio.generated.sh
+      - name: Install pinned toolchain host dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential git curl unzip bc bison flex libssl-dev libelf-dev libtinfo5 libncurses5 python3 python-is-python3 cpio rsync
+      - name: Acquire and verify fresh public toolchain archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash build-cmi-public-deps-audio.generated.sh
+      - name: Real ARM64 kernel and Kona audio compile
+        shell: bash
+        env:
+          CMI_HOST_SANITIZERS: address,undefined
+        run: |
+          set -euo pipefail
+          bash build-cmi-audio.generated.sh
+      - name: Verify linked audio machine and kernel symbols
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 repair-cmi-link.py verify "$RUNNER_TEMP/cmi-driver-baseline/out" "$GITHUB_WORKSPACE/driver-results"
+          python3 ci/cmi/audio_rebuild_20261101.py verify "$GITHUB_WORKSPACE"
+      - name: Save failure information and provenance
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p driver-results
+          cp ci/cmi/audio_rebuild_20261101.py ci/cmi/test_audio_rebuild_20261101.py driver-results/
+          test ! -f build-cmi-audio.generated.sh || cp build-cmi-audio.generated.sh driver-results/
+          test ! -f build-cmi-public-deps-audio.generated.sh || cp build-cmi-public-deps-audio.generated.sh driver-results/
+          printf 'Experiment only. The RC3 Image, ReSukiSU and SUSFS are not built by this workflow. Do not flash.\n' > driver-results/NOT_FLASHABLE.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('driver-results/build.log')
+          lines = p.read_text(errors='replace').splitlines() if p.exists() else []
+          needles = ('error:', 'undefined reference', 'fatal error', 'traceback', 'assertionerror')
+          bad = [x for x in lines if any(y in x.lower() for y in needles)]
+          (Path('driver-results')/'audio-error-summary.txt').write_text('\n'.join(bad[-50:])+'\n')
+          PY
+      - name: Preserve compiled evidence, no phone firmware or secrets
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cmi-audio-abi-experiment-${{ github.run_id }}
+          path: driver-results/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 1
