@@ -55,10 +55,9 @@ def generated_scripts(root):
     end = original.index(end_token)
     if end <= start:
         raise RuntimeError('Unexpected dependency step order')
-    fresh = '''# Consume freshly verified dependencies from the previous CI step.
-cp "$ROOT/public-deps/"*.tar.gz "$WORK/deps/"
-cp "$ROOT/public-deps/SOURCES.txt" "$WORK/deps/SOURCES.txt"
-cp "$ROOT/public-deps/SHA256SUMS" "$WORK/deps/SHA256SUMS"
+    fresh = '''# Copy the *whole* verified output, including the provenance and ARM64 probe.
+# The manifest covers every file, not only tarballs. Re-check all entries here.
+cp -- "$ROOT/public-deps/"* "$WORK/deps/"
 (cd "$WORK/deps"; sha256sum -c SHA256SUMS)
 '''
     output = original[:start] + fresh + original[end:]
