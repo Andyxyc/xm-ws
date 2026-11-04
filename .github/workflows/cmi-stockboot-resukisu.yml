@@ -1,0 +1,82 @@
+name: CMI official boot and ReSukiSU bring-up
+'on':
+  push:
+    branches: [cmi-stockboot-resukisu-20261104]
+    paths:
+      - ci/cmi/stock_resukisu.py
+      - ci/cmi/test_stock_resukisu.py
+      - .github/workflows/cmi-stockboot-resukisu.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: cmi-stockboot-resukisu-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  stock:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Retrieve unchanged official boot and DTBO reference
+        run: python3 -u ci/cmi/stock_resukisu.py stock-reference "$GITHUB_WORKSPACE"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cmi-official-boot-reference-${{ github.run_id }}
+          path: stock-reference/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 1
+  root:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Host tests and generate independent source build
+        run: |
+          set -euo pipefail
+          mkdir -p driver-results
+          printf 'Bring-up only. No SUSFS, no boot repack, no phone tests. DO NOT FLASH.\n' > driver-results/NOT_FLASHABLE.txt
+          python3 -m py_compile ci/cmi/stock_resukisu.py ci/cmi/test_stock_resukisu.py
+          python3 ci/cmi/test_stock_resukisu.py
+          python3 ci/cmi/stock_resukisu.py prepare "$GITHUB_WORKSPACE"
+          bash -n build-cmi-stock-deps.sh
+          bash -n build-cmi-stock-root.sh
+      - name: Install compiler dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential git curl unzip bc bison flex libssl-dev libelf-dev libtinfo5 libncurses5 python3 python-is-python3 cpio rsync
+      - name: Fetch and verify pinned public compilers
+        run: bash build-cmi-stock-deps.sh
+      - name: Compile official-source kernel with pinned ReSukiSU manual hooks
+        env:
+          CMI_HOST_SANITIZERS: address,undefined
+        run: bash build-cmi-stock-root.sh
+      - name: Verify actual linked drivers and root entry points
+        run: |
+          set -euo pipefail
+          python3 repair-cmi-link.py verify "$RUNNER_TEMP/cmi-driver-baseline/out" "$GITHUB_WORKSPACE/driver-results"
+          python3 ci/cmi/stock_resukisu.py verify "$GITHUB_WORKSPACE"
+      - name: Record exact build entry and failure evidence
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p driver-results
+          cp ci/cmi/stock_resukisu.py ci/cmi/test_stock_resukisu.py driver-results/
+          for p in build-cmi-stock-deps.sh build-cmi-stock-root.sh; do
+            test ! -f "$p" || cp "$p" driver-results/
+          done
+          printf 'Official-source bring-up only. SUSFS and full stock boot integration not completed. DO NOT FLASH.\n' > driver-results/NOT_FLASHABLE.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: cmi-official-source-resukisu-${{ github.run_id }}
+          path: driver-results/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 1
