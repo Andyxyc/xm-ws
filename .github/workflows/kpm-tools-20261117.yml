@@ -1,0 +1,39 @@
+name: Prepare KPM 0.14.0 tools for SukiSU 41150
+
+on:
+  push:
+    branches:
+      - kpm-41150-20261117-8fe2
+    paths:
+      - .github/workflows/kpm-tools-20261117.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  get-kpm-tools:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Fetch official pinned KPM tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p kpm-tools
+          base='https://github.com/SukiSU-Nova/SukiSU_KernelPatch_patch/releases/download/0.14.0'
+          curl --fail --location --retry 3 --connect-timeout 20 "$base/kpimg" -o kpm-tools/kpimg
+          curl --fail --location --retry 3 --connect-timeout 20 "$base/kptools-linux" -o kpm-tools/kptools-linux
+          printf '%s\n' \
+            'ab020f31ca1c058603917e46d8a6691fbce0dd5cdc135a9cd8dc780e89472716  kpm-tools/kpimg' \
+            'a6b912ca964d35427d7fbcd87273abac604970e9746fa0613362be971f07259d  kpm-tools/kptools-linux' | sha256sum --check
+          chmod 755 kpm-tools/kptools-linux
+          kpm-tools/kptools-linux -v -k kpm-tools/kpimg
+          kpm-tools/kptools-linux -l -k kpm-tools/kpimg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pinned-kpm-tools-0.14.0
+          path: kpm-tools/
+          if-no-files-found: error
+          retention-days: 3
