@@ -64,7 +64,7 @@ jobs:
           python3 - <<'PY2'
           import base64, gzip, pathlib, hashlib
           raw=gzip.decompress(base64.b64decode(pathlib.Path('.build-inputs/k40-baalam-reviewed-susfs.patch.gz.b64').read_text()))
-          assert hashlib.sha256(raw).hexdigest()=="ad1c69a9cbc6589ad1311469dddf007964a729f9615adf5e82c72e14f22ca16f"
+          assert hashlib.sha256(raw).hexdigest()=="390aa4170ca9a0592d08fe76c8623ef6907dc6c7d6ee1fe9a2e26fd59c41eb9d"
           pathlib.Path('susfs-4.19.patch').write_bytes(raw)
           PY2
           cd kernel
