@@ -1,0 +1,134 @@
+name: K40 MIUI battery fix ReSukiSU candidate
+run-name: K40-MIUI-battery-ReSukiSU-4.1-${{ github.run_id }}
+on:
+  push:
+    branches: [codex/k40-battery-senior-20261126]
+    paths: [.github/workflows/k40-miui-candidate-build.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: k40-battery-senior-20261126
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      SOURCE_SHA: 0ebac374e528249646c900d8c0ea0f54f928439c
+      ROOT_SHA: 0d27e685cb9f1b873cd334371c0d8b6ea4c3aea9
+      TZ: Asia/Shanghai
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install build tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install --no-install-recommends -y bc bison build-essential ccache curl flex git \
+            libelf-dev libssl-dev lz4 make python3 python-is-python3 rsync zip unzip cpio \
+            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
+      - name: Fetch and verify fixed source and compiler
+        run: |
+          set -euo pipefail
+          mkdir kernel
+          git -C kernel init
+          git -C kernel remote add origin https://github.com/AstideLabs/kernel_xiaomi_sm8250_mod.git
+          git -C kernel fetch --depth 1 origin "$SOURCE_SHA"
+          git -C kernel checkout --detach FETCH_HEAD
+          test "$(git -C kernel rev-parse HEAD)" = "$SOURCE_SHA"
+          git clone --depth 1 --branch v4.1.0 https://github.com/ReSukiSU/ReSukiSU.git kernel/KernelSU
+          test "$(git -C kernel/KernelSU rev-parse HEAD)" = "$ROOT_SHA"
+          curl -fL --retry 3 https://github.com/ZyCromerZ/Clang/releases/download/16.0.6-20260510-release/Clang-16.0.6-20260510.tar.gz -o clang.tar.gz
+          echo '01b93913cc2be6c3a68f3d01239cedeab8b83486efd6c80c175eb600b7026cc7  clang.tar.gz' | sha256sum -c -
+          mkdir compiler
+          tar -xf clang.tar.gz -C compiler
+          test -x compiler/bin/clang
+          mkdir evidence
+          printf 'source=%s\nroot=%s\nvariant=MIUI_alioth\nstatus=UNFLASHED_UNTESTED\n' "$SOURCE_SHA" "$ROOT_SHA" > evidence/provenance.txt
+          compiler/bin/clang --version >> evidence/provenance.txt
+      - name: Integrate root and preserve upstream MIUI adaptations
+        run: |
+          set -euo pipefail
+          cd kernel
+          ln -s ../KernelSU/kernel drivers/kernelsu
+          printf '\nobj-$(CONFIG_KSU) += kernelsu/\n' >> drivers/Makefile
+          printf '\nsource "drivers/kernelsu/Kconfig"\n' >> drivers/Kconfig
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('build_kernel.sh').read_text()
+          start=s.index('        # Apply MIUI specific sed patches to dts')
+          end=s.index('\n    fi',start)
+          dts=s[start:end]
+          dts=dts.replace('${DTS_SOURCE}','arch/arm64/boot/dts/vendor/qcom')
+          Path('../miui-panel-patches.sh').write_text('set -e\n'+dts+'\n')
+          # The upstream patch is preserved exactly; no invented gauge registers.
+          fg=Path('drivers/power/supply/qcom/qpnp-fg-gen4.c').read_text()
+          assert 'Vbatt > 3650, exit rapid soc decrease' in fg
+          assert 'K11A_FMT_4520mah' in fg
+          PY
+          bash ../miui-panel-patches.sh
+          cp ../miui-panel-patches.sh ../evidence/
+          git diff -- drivers/Makefile drivers/Kconfig arch/arm64/boot/dts > ../evidence/local-changes.patch
+      - name: Configure MIUI alioth with conservative defaults
+        run: |
+          set -euo pipefail
+          export PATH="$GITHUB_WORKSPACE/compiler/bin:$PATH"
+          cd kernel
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang HOSTCC=clang \
+            CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- alioth_defconfig
+          scripts/config --file out/.config \
+            -e KSU -e KSU_MANUAL_HOOK -e THREAD_INFO_IN_TASK -e KSU_SUSFS -d KPM -d KSU_DEBUG -d BBG \
+            --set-str LOCALVERSION -K40-Senior-MIUI-CANDIDATE \
+            --set-str STATIC_USERMODEHELPER_PATH /system/bin/micd \
+            -e PERF_CRITICAL_RT_TASK -e SF_BINDER -e OVERLAY_FS -e MIGT -e MIGT_ENERGY_MODEL \
+            -e MIHW -e PACKAGE_RUNTIME_INFO -e BINDER_OPT -e KPERFEVENTS -e MILLET -e PERF_HUMANTASK \
+            -d LTO_CLANG -e LTO_NONE -e XIAOMI_MIUI -d MI_MEMORY_SYSFS -e TASK_DELAY_ACCT \
+            -e MIUI_ZRAM_MEMORY_TRACKING -e PERF_HELPER -e BOOTUP_RECLAIM -e MI_RECLAIM -e RTMM \
+            -d REKERNEL -d REKERNEL_NETWORK -d CPU_FREQ_DEFAULT_GOV_PERFORMANCE \
+            -e CPU_FREQ_GOV_SCHEDUTIL -e CPU_FREQ_DEFAULT_GOV_SCHEDUTIL
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang HOSTCC=clang \
+            CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- olddefconfig
+          cp out/.config ../evidence/kernel.config
+          grep -qx 'CONFIG_KSU=y' out/.config
+          grep -qx 'CONFIG_XIAOMI_MIUI=y' out/.config
+          grep -qx 'CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y' out/.config
+          grep -qx 'CONFIG_QPNP_FG_GEN4=y' out/.config
+          grep -qx 'CONFIG_THERMAL=y' out/.config
+          ! grep -qx 'CONFIG_KPM=y' out/.config
+      - name: Compile actual kernel and device trees
+        run: |
+          set -euo pipefail
+          export PATH="$GITHUB_WORKSPACE/compiler/bin:$PATH"
+          cd kernel
+          make -j3 O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang HOSTCC=clang \
+            CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            Image dtbs vmlinux 2>&1 | tee ../evidence/build.log
+      - name: Verify linked root and package unflashed build evidence
+        run: |
+          set -euo pipefail
+          export PATH="$GITHUB_WORKSPACE/compiler/bin:$PATH"
+          test -s kernel/out/arch/arm64/boot/Image
+          mkdir candidate
+          cp kernel/out/arch/arm64/boot/Image candidate/
+          find kernel/out/arch/arm64/boot/dts -name '*alioth*.dtb' -print -exec cp {} candidate/ \;
+          test "$(find candidate -name '*.dtb' | wc -l)" -gt 0
+          llvm-nm kernel/out/vmlinux > evidence/symbols.txt
+          grep -E ' [Tt] ksu_handle_(execveat|faccessat|stat)' evidence/symbols.txt > evidence/root-linked.txt
+          test "$(wc -l < evidence/root-linked.txt)" -ge 3
+          strings kernel/out/vmlinux | grep -m1 'Linux version 4.19' > evidence/kernel-version.txt || test -s evidence/kernel-version.txt
+          cp kernel/out/System.map evidence/
+          cp evidence/provenance.txt candidate/
+          printf '%s\n' 'BUILD CANDIDATE ONLY. Not tested on this phone. No installer included. Does not authorize flashing. Keep original boot and dtbo backups. No battery capacity/SOC override.' > candidate/NOT_FLASHABLE.txt
+          sha256sum candidate/* > evidence/SHA256SUMS
+          zip -r K40-MIUI-ReSukiSU-4.1-UNFLASHED-CANDIDATE.zip candidate evidence
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: K40-MIUI-ReSukiSU-candidate-${{ github.run_id }}
+          path: |
+            K40-MIUI-ReSukiSU-4.1-UNFLASHED-CANDIDATE.zip
+            evidence/
+          if-no-files-found: error
+          retention-days: 15
+
