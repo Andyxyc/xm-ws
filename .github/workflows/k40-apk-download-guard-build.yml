@@ -21,7 +21,7 @@ jobs:
           python3 - <<'PY2'
           import base64, pathlib, zipfile, io, hashlib
           raw=base64.b64decode(pathlib.Path('.build-inputs/k40-apk-download-guard.zip.b64').read_text())
-          assert hashlib.sha256(raw).hexdigest()=='5f573a4eee68b7c72c5780e529fbe3251baa3fe5a371c3071404b5e08b508257'
+          assert hashlib.sha256(raw).hexdigest()=='15eeaa032311a7b4a7a678174a00ed4b228e853519b127b343aa51a18267b85d'
           with zipfile.ZipFile(io.BytesIO(raw)) as z:
             assert all(not pathlib.PurePosixPath(n).is_absolute() and '..' not in pathlib.PurePosixPath(n).parts for n in z.namelist())
             z.extractall('guard')
@@ -39,6 +39,12 @@ jobs:
           (cd guard/dex && zip ../unsigned.apk classes.dex)
           (cd guard && zip -r unsigned.apk META-INF/xposed)
           "$tools/zipalign" -p 4 guard/unsigned.apk delivery/K40-DownloadGuard-API102-unsigned.apk
+          mkdir guard/fixture/classes guard/fixture/dex
+          javac -source 17 -target 17 -classpath "$android_jar" -d guard/fixture/classes guard/fixture/ProbeActivity.java
+          "$tools/d8" --min-api 26 --lib "$android_jar" --output guard/fixture/dex $(find guard/fixture/classes -name '*.class')
+          "$tools/aapt2" link -I "$android_jar" --manifest guard/fixture/AndroidManifest.xml -o guard/fixture/unsigned.apk
+          (cd guard/fixture/dex && zip ../unsigned.apk classes.dex)
+          "$tools/zipalign" -p 4 guard/fixture/unsigned.apk delivery/K40-DownloadProbe-unsigned.apk
           cp "$tools/lib/apksigner.jar" delivery/
           sha256sum delivery/* > delivery/SHA256SUMS
           printf '%s\n' 'Unsigned APK only. Release key remains on the owner Windows SSD, never in CI artifacts.' > delivery/READ-ME.txt
