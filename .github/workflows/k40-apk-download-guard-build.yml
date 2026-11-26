@@ -1,0 +1,49 @@
+name: K40 APK advertisement download guard API102
+on:
+  push:
+    branches: [codex/k40-battery-senior-20261126]
+    paths: [.github/workflows/k40-apk-download-guard-build.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Compile unsigned owner-policy module against official modern API102
+        run: |
+          set -euo pipefail
+          mkdir guard
+          python3 - <<'PY2'
+          import base64, pathlib, zipfile, io, hashlib
+          raw=base64.b64decode(pathlib.Path('.build-inputs/k40-apk-download-guard.zip.b64').read_text())
+          assert hashlib.sha256(raw).hexdigest()=='cfd8d74d14222d42defafbff32def9684ea7cfe03faff44134380356871e0d0d'
+          with zipfile.ZipFile(io.BytesIO(raw)) as z:
+            assert all(not pathlib.PurePosixPath(n).is_absolute() and '..' not in pathlib.PurePosixPath(n).parts for n in z.namelist())
+            z.extractall('guard')
+          PY2
+          curl -fL --retry 2 https://repo.maven.apache.org/maven2/io/github/libxposed/api/102.0.0/api-102.0.0.aar -o api.aar
+          echo '423484a6e1807e7a423c4b88fcd8176d104318259d91791877fed88fe91479d0  api.aar' | sha256sum -c -
+          unzip -p api.aar classes.jar > api.jar
+          sdk="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          android_jar="$(find "$sdk/platforms" -maxdepth 2 -name android.jar | sort -V | tail -1)"
+          tools="$(find "$sdk/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          mkdir guard/classes guard/dex delivery
+          javac -source 17 -target 17 -classpath "$android_jar:api.jar" -d guard/classes guard/ApkGuard.java
+          "$tools/d8" --min-api 26 --lib "$android_jar" --classpath api.jar --output guard/dex $(find guard/classes -name '*.class')
+          "$tools/aapt2" link -I "$android_jar" --manifest guard/AndroidManifest.xml -o guard/unsigned.apk
+          (cd guard/dex && zip ../unsigned.apk classes.dex)
+          (cd guard && zip -r unsigned.apk META-INF/xposed)
+          "$tools/zipalign" -p 4 guard/unsigned.apk delivery/K40-DownloadGuard-API102-unsigned.apk
+          cp "$tools/lib/apksigner.jar" delivery/
+          sha256sum delivery/* > delivery/SHA256SUMS
+          printf '%s\n' 'Unsigned APK only. Release key remains on the owner Windows SSD, never in CI artifacts.' > delivery/READ-ME.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: K40-DownloadGuard-API102-unsigned
+          path: delivery/
+          retention-days: 10
