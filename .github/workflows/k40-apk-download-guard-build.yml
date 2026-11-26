@@ -21,7 +21,7 @@ jobs:
           python3 - <<'PY2'
           import base64, pathlib, zipfile, io, hashlib
           raw=base64.b64decode(pathlib.Path('.build-inputs/k40-apk-download-guard.zip.b64').read_text())
-          assert hashlib.sha256(raw).hexdigest()=='cfd8d74d14222d42defafbff32def9684ea7cfe03faff44134380356871e0d0d'
+          assert hashlib.sha256(raw).hexdigest()=='aa866406bc3b2252e8ee8e8a79c645d290d0b08a772bb4c0f65c9fd6464ff32b'
           with zipfile.ZipFile(io.BytesIO(raw)) as z:
             assert all(not pathlib.PurePosixPath(n).is_absolute() and '..' not in pathlib.PurePosixPath(n).parts for n in z.namelist())
             z.extractall('guard')
