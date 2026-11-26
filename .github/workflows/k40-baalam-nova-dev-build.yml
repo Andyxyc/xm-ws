@@ -16,7 +16,7 @@ jobs:
     timeout-minutes: 100
     env:
       BASE_SHA: 8eff0a54cc4335c504478ce4118c8668821c40cc
-      NOVA_SHA: 5a3ec4145059ed2c4f22c70a16a28a616e104c33
+      NOVA_SHA: d8aafb76eeef070dad2dc39161ddf922545fce90
       PATCH_SHA: ec069a4e34f992d602a6b40d2e211df2516e2865
       TZ: Asia/Shanghai
       CCACHE_DIR: ${{ github.workspace }}/.ccache-k40-baalam
@@ -43,7 +43,7 @@ jobs:
           git -C kernel remote add origin https://github.com/LowTension/BAALAM_android_kernel_xiaomi_sm8250.git
           git -C kernel fetch --depth 1 origin "$BASE_SHA"
           git -C kernel checkout --detach FETCH_HEAD
-          git clone --branch builtin-new https://github.com/SukiSU-Nova/SukiSU-Nova.git kernel/KernelSU
+          git clone --branch builtin-new https://git.zako.shirkneko.top:20004/shirkneko/SukiSU.git kernel/KernelSU
           git -C kernel/KernelSU checkout --detach "$NOVA_SHA"
           test "$(git -C kernel rev-parse HEAD)" = "$BASE_SHA"
           test "$(git -C kernel/KernelSU rev-parse HEAD)" = "$NOVA_SHA"
@@ -55,7 +55,12 @@ jobs:
       - name: Apply reviewed 4.19 SUSFS port without rejected hunks
         run: |
           set -euo pipefail
-          curl -fL --retry 3 "https://raw.githubusercontent.com/JackA1ltman/NonGKI_Kernel_Build_2nd/$PATCH_SHA/Patches/Patch/susfs_patch_to_4.19.patch" -o susfs-4.19.patch
+          python3 - <<'PY2'
+          import base64, gzip, pathlib, hashlib
+          raw=gzip.decompress(base64.b64decode(pathlib.Path('.build-inputs/k40-baalam-reviewed-susfs.patch.gz.b64').read_text()))
+          assert hashlib.sha256(raw).hexdigest()=="6a2316681cbfcda659b4e47f21397c0824cea28aebd81fae99730ac4c71a32e1"
+          pathlib.Path('susfs-4.19.patch').write_bytes(raw)
+          PY2
           cd kernel
           git apply --check ../susfs-4.19.patch
           git apply ../susfs-4.19.patch
@@ -63,6 +68,8 @@ jobs:
           grep -q 'SUSFS_VERSION "v2.4.0"' include/linux/susfs.h
           grep -q 'susfs_is_avc_log_spoofing_enabled' security/selinux/avc.c
           grep -q 'ksu_handle_setresuid' kernel/sys.c
+          grep -q 'ksu_handle_sys_reboot' kernel/reboot.c
+          grep -q 'ksu_handle_post_execveat_sucompat' fs/exec.c
           ln -s ../KernelSU/kernel drivers/kernelsu
           printf '\nobj-$(CONFIG_KSU) += kernelsu/\n' >> drivers/Makefile
           printf '\nsource "drivers/kernelsu/Kconfig"\n' >> drivers/Kconfig
@@ -86,7 +93,7 @@ jobs:
           PY
           cd kernel
           scripts/config --file out/.config \
-            -e KSU -e KSU_SUSFS -e KSU_SUSFS_INLINE_HOOK -e THREAD_INFO_IN_TASK \
+            -e KSU -e KSU_LSM_SECURITY_HOOKS -e KSU_SUSFS -e KSU_SUSFS_INLINE_HOOK -e THREAD_INFO_IN_TASK \
             -e KSU_SUSFS_SUS_PATH -e KSU_SUSFS_SUS_MOUNT -e KSU_SUSFS_SUS_KSTAT \
             -e KSU_SUSFS_SPOOF_UNAME -e KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
             -e KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG -e KSU_SUSFS_OPEN_REDIRECT \
@@ -108,7 +115,7 @@ jobs:
           cd kernel
           make -j3 O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CC='ccache clang' HOSTCC='ccache clang' \
             CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-            drivers/kernelsu/ fs/susfs.o security/selinux/avc.o 2>&1 | tee ../evidence/feature-build.log
+            drivers/kernelsu/ fs/susfs.o security/selinux/avc.o fs/exec.o fs/open.o fs/stat.o fs/read_write.o kernel/sys.o kernel/reboot.o drivers/input/input.o 2>&1 | tee ../evidence/feature-build.log
       - name: Compile full unchanged Baalam core with requested additions
         run: |
           set -euo pipefail
