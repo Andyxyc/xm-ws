@@ -1,0 +1,148 @@
+name: K40 Baalam latest Nova non-GKI SUSFS candidate
+run-name: K40-Baalam-4.19.288-Nova-dev-SUSFS2.4-KPMoff-${{ github.run_id }}
+on:
+  push:
+    branches: [codex/k40-battery-senior-20261126]
+    paths: [.github/workflows/k40-baalam-nova-dev-build.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: k40-baalam-nova-development
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    env:
+      BASE_SHA: 8eff0a54cc4335c504478ce4118c8668821c40cc
+      NOVA_SHA: 5a3ec4145059ed2c4f22c70a16a28a616e104c33
+      PATCH_SHA: ec069a4e34f992d602a6b40d2e211df2516e2865
+      TZ: Asia/Shanghai
+      CCACHE_DIR: ${{ github.workspace }}/.ccache-k40-baalam
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install compiler dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install --no-install-recommends -y bc bison build-essential ccache curl flex git \
+            libelf-dev libssl-dev lz4 make python3 python-is-python3 rsync zip unzip cpio \
+            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
+      - uses: actions/cache/restore@v4
+        with:
+          path: .ccache-k40-baalam
+          key: k40-baalam-nova-clang16-v1-${{ github.run_id }}
+          restore-keys: k40-baalam-nova-clang16-v1-
+      - name: Fetch exact Baalam source, latest non-GKI Nova and compiler
+        run: |
+          set -euo pipefail
+          mkdir kernel evidence
+          git -C kernel init
+          git -C kernel remote add origin https://github.com/LowTension/BAALAM_android_kernel_xiaomi_sm8250.git
+          git -C kernel fetch --depth 1 origin "$BASE_SHA"
+          git -C kernel checkout --detach FETCH_HEAD
+          git clone --branch builtin-new https://github.com/SukiSU-Nova/SukiSU-Nova.git kernel/KernelSU
+          git -C kernel/KernelSU checkout --detach "$NOVA_SHA"
+          test "$(git -C kernel rev-parse HEAD)" = "$BASE_SHA"
+          test "$(git -C kernel/KernelSU rev-parse HEAD)" = "$NOVA_SHA"
+          curl -fL --retry 3 https://github.com/ZyCromerZ/Clang/releases/download/16.0.6-20260510-release/Clang-16.0.6-20260510.tar.gz -o clang.tar.gz
+          echo '01b93913cc2be6c3a68f3d01239cedeab8b83486efd6c80c175eb600b7026cc7  clang.tar.gz' | sha256sum -c -
+          mkdir compiler
+          tar -xf clang.tar.gz -C compiler
+          printf 'base=%s\nnova_non_gki=%s\nsusfs_port=%s\nstatus=BUILD_ONLY_UNFLASHED\n' "$BASE_SHA" "$NOVA_SHA" "$PATCH_SHA" > evidence/provenance.txt
+      - name: Apply reviewed 4.19 SUSFS port without rejected hunks
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 "https://raw.githubusercontent.com/JackA1ltman/NonGKI_Kernel_Build_2nd/$PATCH_SHA/Patches/Patch/susfs_patch_to_4.19.patch" -o susfs-4.19.patch
+          cd kernel
+          git apply --check ../susfs-4.19.patch
+          git apply ../susfs-4.19.patch
+          ! find . -name '*.rej' -print -quit | grep -q .
+          grep -q 'SUSFS_VERSION "v2.4.0"' include/linux/susfs.h
+          grep -q 'susfs_is_avc_log_spoofing_enabled' security/selinux/avc.c
+          grep -q 'ksu_handle_setresuid' kernel/sys.c
+          ln -s ../KernelSU/kernel drivers/kernelsu
+          printf '\nobj-$(CONFIG_KSU) += kernelsu/\n' >> drivers/Makefile
+          printf '\nsource "drivers/kernelsu/Kconfig"\n' >> drivers/Kconfig
+          # Keep the upstream manager trust/certificate checks unchanged.
+          git -C KernelSU diff --exit-code
+          git diff --stat > ../evidence/patch-stat.txt
+          git diff > ../evidence/baalam-susfs.patch
+          cp ../susfs-4.19.patch ../evidence/
+      - name: Preserve running Baalam config and enable requested features
+        run: |
+          set -euo pipefail
+          export PATH="$GITHUB_WORKSPACE/compiler/bin:$PATH"
+          python3 - <<'PY'
+          import base64, gzip, pathlib
+          raw=gzip.decompress(base64.b64decode(pathlib.Path('.build-inputs/k40-baalam.config.gz.b64').read_text()))
+          assert b'CONFIG_QPNP_FG_GEN4=y' in raw
+          assert b'CONFIG_SECURITY_SELINUX=y' in raw
+          pathlib.Path('kernel/out').mkdir(exist_ok=True)
+          pathlib.Path('kernel/out/.config').write_bytes(raw)
+          pathlib.Path('evidence/original-running.config').write_bytes(raw)
+          PY
+          cd kernel
+          scripts/config --file out/.config \
+            -e KSU -e KSU_SUSFS -e KSU_SUSFS_INLINE_HOOK -e THREAD_INFO_IN_TASK \
+            -e KSU_SUSFS_SUS_PATH -e KSU_SUSFS_SUS_MOUNT -e KSU_SUSFS_SUS_KSTAT \
+            -e KSU_SUSFS_SPOOF_UNAME -e KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+            -e KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG -e KSU_SUSFS_OPEN_REDIRECT \
+            -e KSU_SUSFS_SUS_MAP -e KSU_SUSFS_PRIORITY_UID_FILTER \
+            -d KSU_SUSFS_ENABLE_LOG -d KSU_DEBUG -d KPM -d KSU_FEATURE_ADBROOT \
+            -d KSU_ENABLE_FULL_UID_CHECKS --set-str LOCALVERSION -Baalam5.1-Nova-SUSFS-CANDIDATE
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang HOSTCC=clang \
+            CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- olddefconfig
+          cp out/.config ../evidence/final.config
+          for option in CONFIG_KSU=y CONFIG_KSU_SUSFS=y CONFIG_KSU_SUSFS_INLINE_HOOK=y CONFIG_SECURITY_SELINUX=y CONFIG_QPNP_FG_GEN4=y; do grep -qx "$option" out/.config; done
+          ! grep -qx 'CONFIG_KPM=y' out/.config
+          ! grep -qx 'CONFIG_KSU_DEBUG=y' out/.config
+          diff -u ../evidence/original-running.config out/.config > ../evidence/config-diff.txt || test "$?" = 1
+      - name: Compile real Root and SUSFS objects first
+        run: |
+          set -euo pipefail
+          export PATH="$GITHUB_WORKSPACE/compiler/bin:$PATH"
+          ccache --max-size=2G
+          cd kernel
+          make -j3 O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CC='ccache clang' HOSTCC='ccache clang' \
+            CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            drivers/kernelsu/ fs/susfs.o security/selinux/avc.o 2>&1 | tee ../evidence/feature-build.log
+      - name: Compile full unchanged Baalam core with requested additions
+        run: |
+          set -euo pipefail
+          export PATH="$GITHUB_WORKSPACE/compiler/bin:$PATH"
+          cd kernel
+          make -j3 O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CC='ccache clang' HOSTCC='ccache clang' \
+            CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            Image.gz-dtb vmlinux 2>&1 | tee ../evidence/full-build.log
+      - name: Verify actual linked features and retain an unflashed candidate
+        run: |
+          set -euo pipefail
+          export PATH="$GITHUB_WORKSPACE/compiler/bin:$PATH"
+          mkdir candidate
+          cp kernel/out/arch/arm64/boot/Image.gz-dtb candidate/
+          cp kernel/out/Module.symvers evidence/
+          llvm-nm kernel/out/vmlinux > evidence/symbols.txt
+          for sym in susfs_init susfs_set_avc_log_spoofing ksu_handle_setresuid; do grep -E " [Tt] $sym$" evidence/symbols.txt; done
+          test -s kernel/KernelSU/kernel/feature/selinux_hide.c
+          grep -q 'ksu_selinux_hide_enabled' kernel/KernelSU/kernel/feature/selinux_hide.c
+          printf '%s\n' 'UNFLASHED DEVELOPMENT CANDIDATE. Baalam base and running config preserved. No installer. Root/SUSFS power, ABI, display, video and stability require real device tests. KPM disabled. No signature checks changed.' > candidate/READ-ME.txt
+          sha256sum candidate/* > evidence/SHA256SUMS
+          zip -r K40-Baalam-Nova-dev-SUSFS2.4-KPMoff-UNFLASHED.zip candidate evidence
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: .ccache-k40-baalam
+          key: k40-baalam-nova-clang16-v1-${{ github.run_id }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: K40-Baalam-Nova-dev-${{ github.run_id }}
+          path: |
+            K40-Baalam-Nova-dev-SUSFS2.4-KPMoff-UNFLASHED.zip
+            evidence/
+          if-no-files-found: error
+          retention-days: 15
+
