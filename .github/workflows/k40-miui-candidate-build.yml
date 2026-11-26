@@ -83,7 +83,7 @@ jobs:
           assert '#define MODULE_IMPORT_NS' not in module_header
           root_file.write_text(text.replace(annotation, '#ifdef MODULE_IMPORT_NS\n'+annotation+'\n#endif'))
           task_api=Path('include/linux/task_work.h').read_text()
-          assert 'bool notify' in task_api and 'TWA_RESUME' not in task_api
+          assert 'struct callback_head *twork, bool)' in task_api and 'TWA_RESUME' not in task_api
           allowlist=Path('KernelSU/kernel/allowlist.c')
           text=allowlist.read_text()
           old='task_work_add(tsk, cb, TWA_RESUME);'
