@@ -18,6 +18,7 @@ jobs:
       SOURCE_SHA: 0ebac374e528249646c900d8c0ea0f54f928439c
       ROOT_SHA: 0d27e685cb9f1b873cd334371c0d8b6ea4c3aea9
       TZ: Asia/Shanghai
+      CCACHE_DIR: ${{ github.workspace }}/.ccache-k40
     steps:
       - uses: actions/checkout@v4
         with:
@@ -28,6 +29,12 @@ jobs:
           sudo apt-get install --no-install-recommends -y bc bison build-essential ccache curl flex git \
             libelf-dev libssl-dev lz4 make python3 python-is-python3 rsync zip unzip cpio \
             gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
+      - uses: actions/cache/restore@v4
+        id: compiler-cache
+        with:
+          path: .ccache-k40
+          key: k40-senior-clang16-cache-v1-${{ github.run_id }}
+          restore-keys: k40-senior-clang16-cache-v1-
       - name: Fetch and verify fixed source and compiler
         run: |
           set -euo pipefail
@@ -75,6 +82,15 @@ jobs:
           assert text.count(annotation)==1
           assert '#define MODULE_IMPORT_NS' not in module_header
           root_file.write_text(text.replace(annotation, '#ifdef MODULE_IMPORT_NS\n'+annotation+'\n#endif'))
+          task_api=Path('include/linux/task_work.h').read_text()
+          assert 'bool notify' in task_api and 'TWA_RESUME' not in task_api
+          allowlist=Path('KernelSU/kernel/allowlist.c')
+          text=allowlist.read_text()
+          old='task_work_add(tsk, cb, TWA_RESUME);'
+          assert text.count(old)==1
+          text=text.replace(old, 'task_work_add(tsk, cb, true); /* Linux 4.19: notify-resume is bool */')
+          text='#include <linux/sched/task.h> /* put_task_struct on 4.19 */\n'+text
+          allowlist.write_text(text)
           PY
           bash ../miui-panel-patches.sh
           cp ../miui-panel-patches.sh ../evidence/
@@ -111,7 +127,11 @@ jobs:
           set -euo pipefail
           export PATH="$GITHUB_WORKSPACE/compiler/bin:$PATH"
           cd kernel
-          make -j3 O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang HOSTCC=clang \
+          ccache --max-size=2G
+          make -j3 O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CC='ccache clang' HOSTCC='ccache clang' \
+            CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            drivers/kernelsu/ 2>&1 | tee ../evidence/root-object-preflight.log
+          make -j3 O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CC='ccache clang' HOSTCC='ccache clang' \
             CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
             Image dtbs vmlinux 2>&1 | tee ../evidence/build.log
       - name: Verify linked root and package unflashed build evidence
@@ -132,6 +152,11 @@ jobs:
           printf '%s\n' 'BUILD CANDIDATE ONLY. Not tested on this phone. No installer included. Does not authorize flashing. Keep original boot and dtbo backups. No battery capacity/SOC override.' > candidate/NOT_FLASHABLE.txt
           sha256sum candidate/* > evidence/SHA256SUMS
           zip -r K40-MIUI-ReSukiSU-4.1-UNFLASHED-CANDIDATE.zip candidate evidence
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: .ccache-k40
+          key: k40-senior-clang16-cache-v1-${{ github.run_id }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
