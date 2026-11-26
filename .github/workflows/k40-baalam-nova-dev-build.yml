@@ -17,6 +17,8 @@ jobs:
     env:
       BASE_SHA: 8eff0a54cc4335c504478ce4118c8668821c40cc
       NOVA_SHA: d8aafb76eeef070dad2dc39161ddf922545fce90
+      KSU_VERSION: 35102
+      KSU_VERSION_FULL: v3.0.0-r1-d8aafb76@builtin-new
       PATCH_SHA: ec069a4e34f992d602a6b40d2e211df2516e2865
       CONFIG_BOARD_XIAOMI_SM8250: 'y'
       CONFIG_BOARD_ALIOTH: 'y'
@@ -45,10 +47,12 @@ jobs:
           git -C kernel remote add origin https://github.com/LowTension/BAALAM_android_kernel_xiaomi_sm8250.git
           git -C kernel fetch --depth 1 origin "$BASE_SHA"
           git -C kernel checkout --detach FETCH_HEAD
-          git clone --branch builtin-new https://git.zako.shirkneko.top:20004/shirkneko/SukiSU.git kernel/KernelSU
-          git -C kernel/KernelSU checkout --detach "$NOVA_SHA"
+          curl -fL --retry 3 "https://git.zako.shirkneko.top:20004/shirkneko/SukiSU/archive/$NOVA_SHA.tar.gz" -o nova-source.tar.gz
+          echo 'c75619b82a4685c5e984693a29b1e1ba289ea7f313ff509f714d06a7a8242543  nova-source.tar.gz' | sha256sum -c -
+          mkdir kernel/KernelSU
+          tar -xzf nova-source.tar.gz --strip-components=1 -C kernel/KernelSU
           test "$(git -C kernel rev-parse HEAD)" = "$BASE_SHA"
-          test "$(git -C kernel/KernelSU rev-parse HEAD)" = "$NOVA_SHA"
+          printf '%s  %s\n' 'c75619b82a4685c5e984693a29b1e1ba289ea7f313ff509f714d06a7a8242543' nova-source.tar.gz > evidence/nova-source.sha256
           curl -fL --retry 3 https://github.com/ZyCromerZ/Clang/releases/download/16.0.6-20260510-release/Clang-16.0.6-20260510.tar.gz -o clang.tar.gz
           echo '01b93913cc2be6c3a68f3d01239cedeab8b83486efd6c80c175eb600b7026cc7  clang.tar.gz' | sha256sum -c -
           mkdir compiler
@@ -60,7 +64,7 @@ jobs:
           python3 - <<'PY2'
           import base64, gzip, pathlib, hashlib
           raw=gzip.decompress(base64.b64decode(pathlib.Path('.build-inputs/k40-baalam-reviewed-susfs.patch.gz.b64').read_text()))
-          assert hashlib.sha256(raw).hexdigest()=="03491b51b8c9bd4cc6b69c3579b36871556ce10869418024d91aa0837a5763da"
+          assert hashlib.sha256(raw).hexdigest()=="ad1c69a9cbc6589ad1311469dddf007964a729f9615adf5e82c72e14f22ca16f"
           pathlib.Path('susfs-4.19.patch').write_bytes(raw)
           PY2
           cd kernel
@@ -76,7 +80,9 @@ jobs:
           printf '\nobj-$(CONFIG_KSU) += kernelsu/\n' >> drivers/Makefile
           printf '\nsource "drivers/kernelsu/Kconfig"\n' >> drivers/Kconfig
           # Keep the upstream manager trust/certificate checks unchanged.
-          git -C KernelSU diff --exit-code
+          mkdir ../nova-clean
+          tar -xzf ../nova-source.tar.gz --strip-components=1 -C ../nova-clean
+          diff -qr KernelSU ../nova-clean
           git diff --stat > ../evidence/patch-stat.txt
           git diff > ../evidence/baalam-susfs.patch
           cp ../susfs-4.19.patch ../evidence/
@@ -103,6 +109,7 @@ jobs:
             -d KSU_SUSFS_ENABLE_LOG -d KSU_DEBUG -d KPM -d KSU_FEATURE_ADBROOT \
             -d KSU_ENABLE_FULL_UID_CHECKS --set-str LOCALVERSION -Baalam5.1-Nova-SUSFS-CANDIDATE
           make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang HOSTCC=clang \
+            KSU_VERSION="$KSU_VERSION" KSU_VERSION_FULL="$KSU_VERSION_FULL" \
             CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- olddefconfig
           cp out/.config ../evidence/final.config
           for option in CONFIG_KSU=y CONFIG_KSU_SUSFS=y CONFIG_KSU_SUSFS_INLINE_HOOK=y CONFIG_SECURITY_SELINUX=y CONFIG_QPNP_FG_GEN4=y; do grep -qx "$option" out/.config; done
@@ -116,6 +123,7 @@ jobs:
           ccache --max-size=2G
           cd kernel
           make -j3 O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CC='ccache clang' HOSTCC='ccache clang' \
+            KSU_VERSION="$KSU_VERSION" KSU_VERSION_FULL="$KSU_VERSION_FULL" \
             CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
             drivers/kernelsu/ fs/susfs.o security/selinux/avc.o fs/exec.o fs/open.o fs/stat.o fs/read_write.o kernel/sys.o kernel/reboot.o drivers/input/input.o 2>&1 | tee ../evidence/feature-build.log
       - name: Compile full unchanged Baalam core with requested additions
@@ -124,6 +132,7 @@ jobs:
           export PATH="$GITHUB_WORKSPACE/compiler/bin:$PATH"
           cd kernel
           make -j3 O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CC='ccache clang' HOSTCC='ccache clang' \
+            KSU_VERSION="$KSU_VERSION" KSU_VERSION_FULL="$KSU_VERSION_FULL" \
             CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
             Image.gz-dtb vmlinux 2>&1 | tee ../evidence/full-build.log
       - name: Verify actual linked features and retain an unflashed candidate
@@ -154,4 +163,3 @@ jobs:
             evidence/
           if-no-files-found: error
           retention-days: 15
-
