@@ -1,0 +1,47 @@
+name: K40 local download blocking fixture
+on:
+  push:
+    branches: [codex/k40-battery-senior-20261126]
+    paths: [.github/workflows/k40-download-block-probe-build.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build local-only test APK using installed Android SDK
+        run: |
+          set -euo pipefail
+          mkdir probe
+          python3 - <<'PY'
+          import base64, pathlib, zipfile, io
+          raw=base64.b64decode(pathlib.Path('.build-inputs/k40-download-probe.zip.b64').read_text())
+          with zipfile.ZipFile(io.BytesIO(raw)) as z:
+            assert set(z.namelist()) == {'AndroidManifest.xml', 'ProbeActivity.java'}
+            z.extractall('probe')
+          PY
+          sdk="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          android_jar="$(find "$sdk/platforms" -maxdepth 2 -name android.jar | sort -V | tail -1)"
+          tools="$(find "$sdk/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          test -f "$android_jar"
+          mkdir probe/classes probe/dex
+          javac -source 8 -target 8 -classpath "$android_jar" -d probe/classes probe/ProbeActivity.java
+          "$tools/d8" --min-api 26 --lib "$android_jar" --output probe/dex $(find probe/classes -name '*.class')
+          "$tools/aapt2" link -I "$android_jar" --manifest probe/AndroidManifest.xml -o probe/unsigned.apk
+          (cd probe/dex && zip ../unsigned.apk classes.dex)
+          keytool -genkeypair -alias probe -keyalg RSA -keysize 2048 -validity 30 -dname 'CN=K40 local test fixture' -keystore probe/key.jks -storepass localtest -keypass localtest
+          "$tools/zipalign" -p 4 probe/unsigned.apk probe/aligned.apk
+          "$tools/apksigner" sign --ks probe/key.jks --ks-key-alias probe --ks-pass pass:localtest --key-pass pass:localtest --out K40-Local-Download-Probe.apk probe/aligned.apk
+          "$tools/apksigner" verify --verbose K40-Local-Download-Probe.apk
+          sha256sum K40-Local-Download-Probe.apk > SHA256SUMS-probe.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: K40-local-download-probe
+          path: |
+            K40-Local-Download-Probe.apk
+            SHA256SUMS-probe.txt
+          retention-days: 7
+
