@@ -66,10 +66,20 @@ jobs:
           fg=Path('drivers/power/supply/qcom/qpnp-fg-gen4.c').read_text()
           assert 'Vbatt > 3650, exit rapid soc decrease' in fg
           assert 'K11A_FMT_4520mah' in fg
+          # Linux 4.19 has no module symbol namespaces. Guard only the newer
+          # metadata annotation, preserving the source's actual VFS hooks.
+          module_header=Path('include/linux/module.h').read_text()
+          root_file=Path('KernelSU/kernel/ksu.c')
+          text=root_file.read_text()
+          annotation='MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver);'
+          assert text.count(annotation)==1
+          assert '#define MODULE_IMPORT_NS' not in module_header
+          root_file.write_text(text.replace(annotation, '#ifdef MODULE_IMPORT_NS\n'+annotation+'\n#endif'))
           PY
           bash ../miui-panel-patches.sh
           cp ../miui-panel-patches.sh ../evidence/
           git diff -- drivers/Makefile drivers/Kconfig arch/arm64/boot/dts > ../evidence/local-changes.patch
+          git -C KernelSU diff > ../evidence/root-4.19-compat.patch
       - name: Configure MIUI alioth with conservative defaults
         run: |
           set -euo pipefail
