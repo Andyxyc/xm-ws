@@ -64,7 +64,7 @@ jobs:
           python3 - <<'PY2'
           import base64, gzip, pathlib, hashlib
           raw=gzip.decompress(base64.b64decode(pathlib.Path('.build-inputs/k40-baalam-reviewed-susfs.patch.gz.b64').read_text()))
-          assert hashlib.sha256(raw).hexdigest()=="390aa4170ca9a0592d08fe76c8623ef6907dc6c7d6ee1fe9a2e26fd59c41eb9d"
+          assert hashlib.sha256(raw).hexdigest()=="0cc07c1d50c20a66fc7a4252d29ca297adc01ae7c9b8e1a131031b9f680b6d34"
           pathlib.Path('susfs-4.19.patch').write_bytes(raw)
           PY2
           cd kernel
@@ -101,7 +101,7 @@ jobs:
           PY
           cd kernel
           scripts/config --file out/.config \
-            -e KSU -e KSU_LSM_SECURITY_HOOKS -e KSU_SUSFS -e KSU_SUSFS_INLINE_HOOK -e THREAD_INFO_IN_TASK \
+            -e JUMP_LABEL -e KSU -e KSU_LSM_SECURITY_HOOKS -e KSU_SUSFS -e KSU_SUSFS_INLINE_HOOK -e THREAD_INFO_IN_TASK \
             -e KSU_SUSFS_SUS_PATH -e KSU_SUSFS_SUS_MOUNT -e KSU_SUSFS_SUS_KSTAT \
             -e KSU_SUSFS_SPOOF_UNAME -e KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
             -e KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG -e KSU_SUSFS_OPEN_REDIRECT \
@@ -112,7 +112,7 @@ jobs:
             KSU_VERSION="$KSU_VERSION" KSU_VERSION_FULL="$KSU_VERSION_FULL" \
             CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- olddefconfig
           cp out/.config ../evidence/final.config
-          for option in CONFIG_KSU=y CONFIG_KSU_SUSFS=y CONFIG_KSU_SUSFS_INLINE_HOOK=y CONFIG_SECURITY_SELINUX=y CONFIG_QPNP_FG_GEN4=y; do grep -qx "$option" out/.config; done
+          for option in CONFIG_JUMP_LABEL=y CONFIG_KSU=y CONFIG_KSU_SUSFS=y CONFIG_KSU_SUSFS_INLINE_HOOK=y CONFIG_SECURITY_SELINUX=y CONFIG_QPNP_FG_GEN4=y; do grep -qx "$option" out/.config; done
           ! grep -qx 'CONFIG_KPM=y' out/.config
           ! grep -qx 'CONFIG_KSU_DEBUG=y' out/.config
           diff -u ../evidence/original-running.config out/.config > ../evidence/config-diff.txt || test "$?" = 1
