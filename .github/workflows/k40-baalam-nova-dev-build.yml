@@ -64,7 +64,7 @@ jobs:
           python3 - <<'PY2'
           import base64, gzip, pathlib, hashlib
           raw=gzip.decompress(base64.b64decode(pathlib.Path('.build-inputs/k40-baalam-reviewed-susfs.patch.gz.b64').read_text()))
-          assert hashlib.sha256(raw).hexdigest()=="0cc07c1d50c20a66fc7a4252d29ca297adc01ae7c9b8e1a131031b9f680b6d34"
+          assert hashlib.sha256(raw).hexdigest()=="a2249e98bb237171dc7ca2532950c97dadaf49af2c12437d6180d1561cc4ab5c"
           pathlib.Path('susfs-4.19.patch').write_bytes(raw)
           PY2
           cd kernel
@@ -86,7 +86,7 @@ jobs:
           git diff --stat > ../evidence/patch-stat.txt
           git diff > ../evidence/baalam-susfs.patch
           cp ../susfs-4.19.patch ../evidence/
-      - name: Preserve running Baalam config and enable requested features
+      - name: Use genuine Baalam alioth defconfig and enable requested features
         run: |
           set -euo pipefail
           export PATH="$GITHUB_WORKSPACE/compiler/bin:$PATH"
@@ -95,11 +95,13 @@ jobs:
           raw=gzip.decompress(base64.b64decode(pathlib.Path('.build-inputs/k40-baalam.config.gz.b64').read_text()))
           assert b'CONFIG_QPNP_FG_GEN4=y' in raw
           assert b'CONFIG_SECURITY_SELINUX=y' in raw
-          pathlib.Path('kernel/out').mkdir(exist_ok=True)
-          pathlib.Path('kernel/out/.config').write_bytes(raw)
-          pathlib.Path('evidence/original-running.config').write_bytes(raw)
+          pathlib.Path('evidence/reported-proc-config-stock-reference.config').write_bytes(raw)
           PY
           cd kernel
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang HOSTCC=clang \
+            KSU_VERSION="$KSU_VERSION" KSU_VERSION_FULL="$KSU_VERSION_FULL" \
+            CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- vendor/alioth_defconfig
+          cp out/.config ../evidence/baalam-original-defconfig-expanded.config
           scripts/config --file out/.config \
             -e JUMP_LABEL -e KSU -e KSU_LSM_SECURITY_HOOKS -e KSU_SUSFS -e KSU_SUSFS_INLINE_HOOK -e THREAD_INFO_IN_TASK \
             -e KSU_SUSFS_SUS_PATH -e KSU_SUSFS_SUS_MOUNT -e KSU_SUSFS_SUS_KSTAT \
@@ -115,7 +117,7 @@ jobs:
           for option in CONFIG_JUMP_LABEL=y CONFIG_KSU=y CONFIG_KSU_SUSFS=y CONFIG_KSU_SUSFS_INLINE_HOOK=y CONFIG_SECURITY_SELINUX=y CONFIG_QPNP_FG_GEN4=y; do grep -qx "$option" out/.config; done
           ! grep -qx 'CONFIG_KPM=y' out/.config
           ! grep -qx 'CONFIG_KSU_DEBUG=y' out/.config
-          diff -u ../evidence/original-running.config out/.config > ../evidence/config-diff.txt || test "$?" = 1
+          diff -u ../evidence/baalam-original-defconfig-expanded.config out/.config > ../evidence/config-diff.txt || test "$?" = 1
       - name: Compile real Root and SUSFS objects first
         run: |
           set -euo pipefail
@@ -141,12 +143,26 @@ jobs:
           export PATH="$GITHUB_WORKSPACE/compiler/bin:$PATH"
           mkdir candidate
           cp kernel/out/arch/arm64/boot/Image.gz-dtb candidate/
+          cp kernel/out/arch/arm64/boot/Image.gz candidate/
+          python3 - <<'PY3'
+          import pathlib, zlib, hashlib
+          root=pathlib.Path('kernel/out')
+          image=zlib.decompress((root/'arch/arm64/boot/Image.gz').read_bytes(),31)
+          at=image.index(b'IKCFG_ST')
+          embedded=zlib.decompress(image[at+8:],31)
+          actual=(root/'.config').read_bytes()
+          assert embedded==actual, 'Embedded config does not match actual build config'
+          assert b'CONFIG_KSU=y' in embedded
+          assert b'CONFIG_JUMP_LABEL=y' in embedded
+          pathlib.Path('evidence/actual-embedded.config').write_bytes(embedded)
+          pathlib.Path('evidence/embedded-config-verification.txt').write_text('PASS actual .config == Image embedded config SHA256 '+hashlib.sha256(embedded).hexdigest()+'\n')
+          PY3
           cp kernel/out/Module.symvers evidence/
           llvm-nm kernel/out/vmlinux > evidence/symbols.txt
           for sym in susfs_init susfs_set_avc_log_spoofing ksu_handle_setresuid; do grep -E " [Tt] $sym$" evidence/symbols.txt; done
           test -s kernel/KernelSU/kernel/feature/selinux_hide.c
           grep -q 'ksu_selinux_hide_enabled' kernel/KernelSU/kernel/feature/selinux_hide.c
-          printf '%s\n' 'UNFLASHED DEVELOPMENT CANDIDATE. Baalam base and running config preserved. No installer. Root/SUSFS power, ABI, display, video and stability require real device tests. KPM disabled. No signature checks changed.' > candidate/READ-ME.txt
+          printf '%s\n' 'UNFLASHED DEVELOPMENT CANDIDATE. Baalam source and genuine vendor/alioth_defconfig tuning preserved. Old proc config was a hardcoded stock reference and is not treated as an exact build config. No installer. Root/SUSFS power, ABI, display, video and stability require real device tests. KPM disabled. No signature checks changed.' > candidate/READ-ME.txt
           sha256sum candidate/* > evidence/SHA256SUMS
           zip -r K40-Baalam-Nova-dev-SUSFS2.4-KPMoff-UNFLASHED.zip candidate evidence
       - uses: actions/cache/save@v4
