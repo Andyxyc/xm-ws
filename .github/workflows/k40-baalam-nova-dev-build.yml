@@ -18,6 +18,8 @@ jobs:
       BASE_SHA: 8eff0a54cc4335c504478ce4118c8668821c40cc
       NOVA_SHA: d8aafb76eeef070dad2dc39161ddf922545fce90
       PATCH_SHA: ec069a4e34f992d602a6b40d2e211df2516e2865
+      CONFIG_BOARD_XIAOMI_SM8250: 'y'
+      CONFIG_BOARD_ALIOTH: 'y'
       TZ: Asia/Shanghai
       CCACHE_DIR: ${{ github.workspace }}/.ccache-k40-baalam
     steps:
@@ -58,7 +60,7 @@ jobs:
           python3 - <<'PY2'
           import base64, gzip, pathlib, hashlib
           raw=gzip.decompress(base64.b64decode(pathlib.Path('.build-inputs/k40-baalam-reviewed-susfs.patch.gz.b64').read_text()))
-          assert hashlib.sha256(raw).hexdigest()=="43c592ec538732fe1dd2e6a1b5ddff76d60c2cb89cdf03f95ca9490bc1fcdec4"
+          assert hashlib.sha256(raw).hexdigest()=="03491b51b8c9bd4cc6b69c3579b36871556ce10869418024d91aa0837a5763da"
           pathlib.Path('susfs-4.19.patch').write_bytes(raw)
           PY2
           cd kernel
