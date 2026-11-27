@@ -1,0 +1,49 @@
+name: K40 APK download guard five video applications v1.5
+on:
+  push:
+    branches: [codex/k40-battery-senior-20261126]
+    paths: [.github/workflows/k40-hgquiet-build.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Compile unsigned owner-policy module against official modern API102
+        run: |
+          set -euo pipefail
+          mkdir guard
+          python3 - <<'PY2'
+          import base64, pathlib, zipfile, io, hashlib
+          raw=base64.b64decode('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')
+          assert hashlib.sha256(raw).hexdigest()=='f09bfd4e6519566ba784a9e7ff6adb5fc98cec1518785541b980f4f31ed6ad08'
+          with zipfile.ZipFile(io.BytesIO(raw)) as z:
+            assert all(not pathlib.PurePosixPath(n).is_absolute() and '..' not in pathlib.PurePosixPath(n).parts for n in z.namelist())
+            z.extractall('guard')
+          PY2
+          curl -fL --retry 2 https://repo.maven.apache.org/maven2/io/github/libxposed/api/102.0.0/api-102.0.0.aar -o api.aar
+          echo '423484a6e1807e7a423c4b88fcd8176d104318259d91791877fed88fe91479d0  api.aar' | sha256sum -c -
+          unzip -p api.aar classes.jar > api.jar
+          sdk="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          android_jar="$(find "$sdk/platforms" -maxdepth 2 -name android.jar | sort -V | tail -1)"
+          tools="$(find "$sdk/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          mkdir guard/classes guard/dex delivery
+          javac -source 17 -target 17 -classpath "$android_jar:api.jar" -d guard/classes guard/Quiet.java
+          "$tools/d8" --min-api 26 --lib "$android_jar" --classpath api.jar --output guard/dex $(find guard/classes -name '*.class')
+          "$tools/aapt2" link -I "$android_jar" --manifest guard/AndroidManifest.xml -o guard/unsigned.apk
+          (cd guard/dex && zip ../unsigned.apk classes.dex)
+          (cd guard && zip -r unsigned.apk META-INF/xposed)
+          "$tools/zipalign" -p 4 guard/unsigned.apk delivery/K40-HongguoQuiet-unsigned.apk
+          cp "$tools/lib/apksigner.jar" delivery/
+          sha256sum delivery/* > delivery/SHA256SUMS
+          printf '%s\n' 'Unsigned APK only. Release key remains on the owner Windows SSD, never in CI artifacts.' > delivery/READ-ME.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: K40-HongguoQuiet-unsigned
+          path: delivery/
+          retention-days: 10
