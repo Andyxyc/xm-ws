@@ -1,0 +1,40 @@
+name: K40 giant home v1.2 safe folder return
+on:
+  push:
+    branches: [codex/k40-battery-senior-20261126]
+    paths: [.github/workflows/k40-giant-home-v12-build.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    steps:
+      - name: Compile owner rest reminder without online dependencies
+        run: |
+          set -euo pipefail
+          mkdir guard delivery
+          python3 - <<'PY2'
+          import pathlib,zipfile,io,base64,hashlib
+          raw=base64.b64decode('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')
+          assert hashlib.sha256(raw).hexdigest()=='836512c65d1e65ee0140fc296f9ec2a754741db534198da93ce398c075108ae9'
+          with zipfile.ZipFile(io.BytesIO(raw)) as z:z.extractall('guard')
+          PY2
+          sdk="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          android_jar="$(find "$sdk/platforms" -maxdepth 2 -name android.jar | sort -V | tail -1)"
+          tools="$(find "$sdk/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          mkdir guard/classes guard/dex
+          javac -source 17 -target 17 -classpath "$android_jar" -d guard/classes guard/HomeActivity.java
+          "$tools/d8" --min-api 33 --lib "$android_jar" --output guard/dex $(find guard/classes -name '*.class')
+          "$tools/aapt2" link -I "$android_jar" --manifest guard/AndroidManifest.xml -o guard/unsigned.apk
+          (cd guard/dex && zip ../unsigned.apk classes.dex)
+          "$tools/zipalign" -p 4 guard/unsigned.apk delivery/K40-GiantHome-unsigned.apk
+          cp "$tools/lib/apksigner.jar" delivery/
+          cp guard/dex/classes.dex delivery/
+          sha256sum delivery/* > delivery/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: K40-GiantHome-unsigned
+          path: delivery/
+          retention-days: 7
