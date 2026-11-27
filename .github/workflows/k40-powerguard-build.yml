@@ -1,0 +1,42 @@
+name: K40 event power guard build v1.0
+on:
+  push:
+    branches: [codex/k40-battery-senior-20261126]
+    paths: [.github/workflows/k40-powerguard-build.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    steps:
+      - name: Compile owner rest reminder without online dependencies
+        run: |
+          set -euo pipefail
+          mkdir guard delivery
+          python3 - <<'PY2'
+          import pathlib,zipfile,io,base64,hashlib
+          raw=base64.b64decode('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')
+          assert hashlib.sha256(raw).hexdigest()=='daa84c4c306d0543b669967b0d4671c53bef9417a1de735cb033e0567c804de0'
+          with zipfile.ZipFile(io.BytesIO(raw)) as z:z.extractall('guard')
+          PY2
+          sdk="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          android_jar="$(find "$sdk/platforms" -maxdepth 2 -name android.jar | sort -V | tail -1)"
+          tools="$(find "$sdk/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          mkdir guard/classes guard/dex guard/tests
+          javac -d guard/tests guard/PowerPolicy.java guard/PowerPolicyTest.java
+          java -cp guard/tests local.k40.powerguard.PowerPolicyTest
+          javac -source 17 -target 17 -classpath "$android_jar" -d guard/classes guard/PowerPolicy.java guard/PowerGuard.java
+          "$tools/d8" --min-api 33 --lib "$android_jar" --output guard/dex $(find guard/classes -name '*.class')
+          "$tools/aapt2" link -I "$android_jar" --manifest guard/AndroidManifest.xml -o guard/unsigned.apk
+          (cd guard/dex && zip ../unsigned.apk classes.dex)
+          "$tools/zipalign" -p 4 guard/unsigned.apk delivery/K40-PowerGuard-unsigned.apk
+          cp "$tools/lib/apksigner.jar" delivery/
+          cp guard/dex/classes.dex delivery/
+          sha256sum delivery/* > delivery/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: K40-PowerGuard-unsigned
+          path: delivery/
+          retention-days: 7
