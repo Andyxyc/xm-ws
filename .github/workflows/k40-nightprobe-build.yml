@@ -1,0 +1,40 @@
+name: K40 giant home v1.2 safe folder return
+on:
+  push:
+    branches: [codex/k40-battery-senior-20261126]
+    paths: [.github/workflows/k40-nightprobe-build.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    steps:
+      - name: Compile owner rest reminder without online dependencies
+        run: |
+          set -euo pipefail
+          mkdir guard delivery
+          python3 - <<'PY2'
+          import pathlib,zipfile,io,base64,hashlib
+          raw=base64.b64decode('UEsDBBQAAAAIAMiBe13dj9aeOAEAADwCAAATAAAAQW5kcm9pZE1hbmlmZXN0LnhtbHWSz0rDQBDG732KsPfuKvVUkkApBQsapFbv22SaLtl/7E5LPXrw5t2Lx568eBHEByrYt5A0SSMRb8s3v2/mm2FDxbVYgsdgq6T2Q64zZ0QWkRWiHTLm0xUo7mmt09Qoxm3BHHhWaySwPC14DhGRJuWSFhdnVIt8hdaZBZCg5oYbcF4YPTYZROT8j55wddTjXhCuPfi+z4oTo4S+zYr7iozIYNDakbscsFNlcdXDglPCl/KJ18c5zUItQKfJfDJLJnPCygjcWilSjr+tki9ARmS/ez28fBzenr/fH/e7r/3TJ4lDnqLYCHzozKE35RFGdbFNDVtrHEIWEXRrIHEoNILG/lJIBFe1+zd0xdKKodejaVIunHKE3Lhugo6poejV6C4ZX05mpZV1prNmm/LZHiLuhaz5MHHvB1BLAwQUAAAACADIgXtd8iHaSZcBAACdAgAACgAAAFByb2JlLmphdmGdkk1rGzEQhu/7KwadpDhVNsWHEuND4prGEBqzuz41pcjSZK16V1qkWZvF+L8X2UvJqYceBNIzH+87gzql96pGaLxWjdxPc+lsvaMu+C3OMtt2PhD8VgclHZK8mX0k1subWdb128Zq0I2KEdap7pTBCCMpshoO3hpolXW8pGBd/eMnqFBHcaIwnDKA0us9EsS5w+P44GIWpfbOoSae8MohXUOPxgSMkbMxbA+WBr1DvZf1VVBq37LbL7m4neZ5njrFVFzZFn1P/AozgChrpNeeup5KCqhaLuQxWELOvi0ruKvRYVCEvz7nU3iuqvXdvbx/C2/u2Ud6gH/qp7TFmODdA+jGR0wwHZaEnwbCyNmm/PRYLlYrJi6eyiESttL3JLtgHTWOs83q65xNlDPBWyN9lOvgNcYo22FjDRcTBsWy3LxUczZJu3rq398xoClQGQzj+v4OOdLL8B8wF0LIgMq8WIdcXPafPPNk66wV6R2vdsEf1bZBQHH6T6fLongt5myCSX+Rfg0X6Vratmvwu2ov4udzds7+AFBLAwQUAAAACADIgXtdKlsU9NUAAAASAQAAEgAAAFByb2JlQWN0aXZpdHkuamF2YV2NsU4CQRRF+/2KF6qdZmJhN7FAfsDC2M/OvCwvTGYmO29ZDKGggMooHQ0lFY0WJuoHjcpfGBKWwvaec++N2kx0jeCC0U5Orq+kp3rMsQkVqiK2lSMDxumU4O6UDQ3TlPgRcMbobQLtbRPISh2j7OG8gHNzGshC8KMGNWPZuyHJ29Zbh1CJeWojNvLiVEL1Wke2Rpb3OOMHwg74xmN3OfxHSx5TEoplQj5l5SDvd8fte94855e378/Vz2Z9PDz9vi7z/iuvPgZCJeRR8Iz+PCDUolgUf1BLAQIUABQAAAAIAMiBe13dj9aeOAEAADwCAAATAAAAAAAAAAAAAACAAQAAAABBbmRyb2lkTWFuaWZlc3QueG1sUEsBAhQAFAAAAAgAyIF7XfIh2kmXAQAAnQIAAAoAAAAAAAAAAAAAAIABaQEAAFByb2JlLmphdmFQSwECFAAUAAAACADIgXtdKlsU9NUAAAASAQAAEgAAAAAAAAAAAAAAgAEoAwAAUHJvYmVBY3Rpdml0eS5qYXZhUEsFBgAAAAADAAMAuQAAAC0EAAAAAA==')
+          assert hashlib.sha256(raw).hexdigest()=='1889045a741006bd9cabc4fbec92a40b7e7bf846bdc41e48440a5602458fe7ca'
+          with zipfile.ZipFile(io.BytesIO(raw)) as z:z.extractall('guard')
+          PY2
+          sdk="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          android_jar="$(find "$sdk/platforms" -maxdepth 2 -name android.jar | sort -V | tail -1)"
+          tools="$(find "$sdk/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          mkdir guard/classes guard/dex
+          javac -source 17 -target 17 -classpath "$android_jar" -d guard/classes guard/Probe.java guard/ProbeActivity.java
+          "$tools/d8" --min-api 33 --lib "$android_jar" --output guard/dex $(find guard/classes -name '*.class')
+          "$tools/aapt2" link -I "$android_jar" --manifest guard/AndroidManifest.xml -o guard/unsigned.apk
+          (cd guard/dex && zip ../unsigned.apk classes.dex)
+          "$tools/zipalign" -p 4 guard/unsigned.apk delivery/K40-NightProbe-unsigned.apk
+          cp "$tools/lib/apksigner.jar" delivery/
+          cp guard/dex/classes.dex delivery/
+          sha256sum delivery/* > delivery/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: K40-NightProbe-unsigned
+          path: delivery/
+          retention-days: 7
